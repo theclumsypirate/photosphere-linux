@@ -153,10 +153,11 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent) {
     auto* left = new QVBoxLayout(controls);
     left->setContentsMargins(4, 4, 4, 4);
     left->setSpacing(6);
-    auto* settingsButton = new QPushButton(controls);
+    auto* settingsButton = new QPushButton("Settings", controls);
     settingsButton->setIcon(QIcon(":/icons/settings.png"));
+    settingsButton->setIconSize(QSize(24, 24));
     settingsButton->setToolTip("General settings");
-    settingsButton->setMinimumWidth(44);
+    settingsButton->setMinimumWidth(120);
     left->addWidget(settingsButton, 0, Qt::AlignRight);
     left->addWidget(new QLabel("Input files, folders or drag and drop", controls));
     fileList_ = new QListWidget(controls);
