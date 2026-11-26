@@ -4,6 +4,9 @@ This is a simple app with a GUI for automatic stitching images or videos.
 - Supports DNG (RAW image file format)
 - Supports INSV (raw 360-degree video file format)
   - For INSV format, the software can extract a stitched 360-degree image from a dual-fisheye video; however, full video stitching and rendering occur only upon export
+ ---
+ - This app works best with dual-fisheye footage.
+    
 
 ### Dual fisheye input
 <p align="center">
@@ -19,6 +22,8 @@ This is a simple app with a GUI for automatic stitching images or videos.
 <p align="center">
   <img src="docs/example_360_stitched_photo.jpg" width="70%" alt="Stitched panorama">
 </p>
+
+
 
 ## Install it from here
 - Grab the latest Appimage from [GitHub Releases](https://github.com/theclumsypirate/photosphere-linux/releases/latest)
