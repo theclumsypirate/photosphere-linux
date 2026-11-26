@@ -1,6 +1,7 @@
 #include "core/stitcher.hpp"
 
 #include "core/blender.hpp"
+#include "core/pose_refiner.hpp"
 #include "core/renderer.hpp"
 
 #include <opencv2/imgproc.hpp>
@@ -137,6 +138,77 @@ Panorama stitchDualFisheye(const std::vector<LensFrame>& pair,
     return out;
 }
 
+namespace {
+
+Panorama stitchMultiFrame(const std::vector<LensFrame>& frames,
+                          const StitchOptions& options,
+                          std::string& diagnostics) {
+    std::vector<LensFrame> ordered;
+    for (const auto& f : frames)
+        if (f.hasPose) ordered.push_back(f);
+    std::stable_sort(ordered.begin(), ordered.end(),
+                     [](const LensFrame& a, const LensFrame& b) {
+                         if (a.captureIndex >= 0 && b.captureIndex >= 0)
+                             return a.captureIndex < b.captureIndex;
+                         return a.sequence < b.sequence;
+                     });
+    std::vector<PoseFrame> poseFrames;
+    poseFrames.reserve(ordered.size());
+    for (const auto& f : ordered) {
+        PoseFrame pf;
+        pf.image = f.image;
+        const bool portrait = f.image.rows > f.image.cols;
+        const double hfov = f.horizontalFovDegrees > 0 ? f.horizontalFovDegrees
+                                                       : (portrait ? 65.0 : 80.0);
+        const double vfov = f.verticalFovDegrees > 0 ? f.verticalFovDegrees
+                                                     : (portrait ? 80.0 : 65.0);
+        pf.intrinsics = FrameIntrinsics::fromFieldOfView(
+            f.image.cols, f.image.rows, hfov, vfov);
+        CameraPose pose;
+        pose.yawDegrees = f.yawDegrees;
+        // EXIF pitch follows the capture convention: negative is above horizon.
+        pose.pitchDegrees = -f.pitchDegrees;
+        pose.rollDegrees = f.rollDegrees;
+        if (f.hasCameraMatrix) {
+            pose.matrix = f.cameraMatrix;
+            pose.hasMatrix = true;
+        }
+        pf.pose = pose;
+        poseFrames.push_back(std::move(pf));
+    }
+    std::vector<PreparedFrame> prepared;
+    prepared.reserve(poseFrames.size());
+    if (options.refinePoses) {
+        const PoseRefineResult refined = refinePoses(poseFrames);
+        for (size_t i = 0; i < poseFrames.size(); ++i) {
+            PreparedFrame pf;
+            pf.image = poseFrames[i].image;
+            pf.intrinsics = poseFrames[i].intrinsics;
+            pf.basis = basisFromMatrix(refined.rotations[i]);
+            prepared.push_back(std::move(pf));
+        }
+        diagnostics = "multi-frame, " + std::to_string(prepared.size()) +
+                      " frames, " + std::to_string(refined.edgeCount) +
+                      " refined pose edges";
+    } else {
+        for (const auto& pf : poseFrames) {
+            PreparedFrame out;
+            out.image = pf.image;
+            out.intrinsics = pf.intrinsics;
+            out.basis = basisFromPose(pf.pose);
+            prepared.push_back(std::move(out));
+        }
+        diagnostics = "multi-frame, " + std::to_string(prepared.size()) +
+                      " frames, EXIF poses";
+    }
+    RenderOptions ro;
+    ro.width = options.width;
+    ro.multiband = options.multiband;
+    return renderPanorama(prepared, ro);
+}
+
+} // namespace
+
 Panorama stitchSession(const io::InputSession& session,
                        const StitchOptions& options,
                        std::string& diagnostics) {
@@ -148,6 +220,12 @@ Panorama stitchSession(const io::InputSession& session,
     }
     if (pair.size() >= 2 && pair[0].lens != pair[1].lens)
         return stitchDualFisheye(pair, options, diagnostics);
+
+    int posedCount = 0;
+    for (const auto& f : session.frames)
+        if (f.hasPose) ++posedCount;
+    if (posedCount >= 3)
+        return stitchMultiFrame(session.frames, options, diagnostics);
 
     std::vector<PreparedFrame> frames;
     const size_t count = options.maxFrames > 0

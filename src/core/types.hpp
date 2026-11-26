@@ -2,6 +2,8 @@
 
 #include <opencv2/core.hpp>
 
+#include "core/rotation.hpp"
+
 #include <string>
 #include <vector>
 
@@ -15,6 +17,18 @@ struct LensFrame {
     int lens = 0;           // 0 or 1
     int sequence = 0;       // capture order
     double timestamp = 0.0; // seconds, when available
+
+    // Optional capture pose from EXIF UserComment. Used by the multi frame
+    // ring stitcher when more than two stills are loaded.
+    bool hasPose = false;
+    int captureIndex = -1;
+    double yawDegrees = 0.0;
+    double pitchDegrees = 0.0;
+    double rollDegrees = 0.0;
+    double horizontalFovDegrees = 0.0;
+    double verticalFovDegrees = 0.0;
+    Mat3 cameraMatrix = rotation::identity();
+    bool hasCameraMatrix = false;
 };
 
 struct CameraModel {

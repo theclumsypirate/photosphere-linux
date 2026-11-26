@@ -2,6 +2,7 @@
 #include "core/gpu_info.hpp"
 #include "core/little_planet.hpp"
 #include "core/stitcher.hpp"
+#include "io/exif_pose.hpp"
 #include "io/frame_store.hpp"
 #include "io/image_io.hpp"
 #include "io/insv_reader.hpp"
@@ -24,6 +25,8 @@ void usage() {
     std::cout << "photosphere-cli - offline 360 photo tools\n\n"
               << "Commands:\n"
               << "  gpu       show detected GPU and preferred decode backend\n"
+              << "Global options for stitch/auto/batch/video: --refine, --no-multiband,\n"
+              << "  --flip, --no-flip\n"
               << "  stitch    -o OUT.jpg [-w WIDTH] [--fov DEG] [--flip|--no-flip]\n"
               << "            [--no-multiband] [--max-frames N] INPUT...\n"
               << "  inspect   INPUT...\n"
@@ -92,7 +95,7 @@ bool cmdStitch(int argc, char** argv) {
             const std::string a = argv[i];
             if (a == "-o" || a == "-w" || a == "--fov" || a == "--max-frames") { ++i; continue; }
             if (a == "--no-multiband" || a == "--no-flip" || a == "--flip" ||
-                a == "stitch") continue;
+                a == "--refine" || a == "stitch") continue;
             files.push_back(a);
         }
         std::string s;
@@ -125,6 +128,7 @@ bool cmdStitch(int argc, char** argv) {
     if (hasFlag(argc, argv, "--no-flip")) options.flipLenses = false;
     if (hasFlag(argc, argv, "--flip")) options.flipLenses = true;
     options.multiband = !hasFlag(argc, argv, "--no-multiband");
+    options.refinePoses = hasFlag(argc, argv, "--refine");
     std::string diagnostics;
     const ps::Panorama pano = ps::stitchSession(session, options, diagnostics);
     if (pano.equirect.empty()) { std::cerr << "stitch failed: " << diagnostics << "\n"; return false; }
@@ -165,6 +169,7 @@ bool cmdBatch(int argc, char** argv) {
     if (hasFlag(argc, argv, "--no-flip")) options.flipLenses = false;
     if (hasFlag(argc, argv, "--flip")) options.flipLenses = true;
     options.multiband = !hasFlag(argc, argv, "--no-multiband");
+    options.refinePoses = hasFlag(argc, argv, "--refine");
 
     std::cout << "duration=" << duration << " s, seeking to " << times.size()
               << " timestamps, " << frames.size() << " lens frames\n";
@@ -209,6 +214,7 @@ bool cmdVideo(int argc, char** argv) {
     if (hasFlag(argc, argv, "--no-flip")) options.flipLenses = false;
     if (hasFlag(argc, argv, "--flip")) options.flipLenses = true;
     options.multiband = !hasFlag(argc, argv, "--no-multiband");
+    options.refinePoses = hasFlag(argc, argv, "--refine");
 
     std::string error;
     ps::io::Mp4Writer writer(output, width, width / 2, fps);
@@ -244,6 +250,8 @@ bool cmdAuto(int argc, char** argv) {
     for (int i = 2; i < argc; ++i) {
         const std::string a = argv[i];
         if (a == "-o" || a == "-w" || a == "--fov" || a == "--max-frames") { ++i; continue; }
+        if (a == "--refine" || a == "--no-multiband" || a == "--flip" ||
+            a == "--no-flip") continue;
         files.push_back(a);
     }
     if (dir.empty() || files.empty()) {
@@ -302,6 +310,11 @@ bool cmdInspect(int argc, char** argv) {
                 for (const auto& im : images)
                     std::cout << im.cols << "x" << im.rows << " ";
                 std::cout << "\n";
+                ps::io::ExifPose pose;
+                if (ps::io::readExifPose(path, pose))
+                    std::cout << "  pose index=" << pose.index << " yaw="
+                              << pose.yawDegrees << " pitch=" << pose.pitchDegrees
+                              << " roll=" << pose.rollDegrees << "\n";
                 if (model.calibrated)
                     std::cout << "  calibration: center=" << model.center.x << ","
                               << model.center.y << " focal=" << model.focal << "\n";

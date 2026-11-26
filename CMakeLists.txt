@@ -38,6 +38,7 @@ target_link_libraries(ps_core PUBLIC ${OpenCV_LIBS} Threads::Threads)
 
 # I/O: image readers, INSV demux, frame store.
 add_library(ps_io
+  src/io/exif_pose.cpp
   src/io/image_io.cpp
   src/io/insv_reader.cpp
   src/io/frame_store.cpp
@@ -96,10 +97,17 @@ if(PS_BUILD_GUI)
   qt_add_executable(photosphere-gui
     src/gui/main.cpp
     src/gui/main_window.cpp
-    src/gui/viewer_widget.cpp)
+    src/gui/viewer_widget.cpp
+    src/gui/resources.qrc)
   target_link_libraries(photosphere-gui PRIVATE
     ps_io ps_core Qt6::Widgets Qt6::OpenGLWidgets)
   install(TARGETS photosphere-gui RUNTIME DESTINATION bin)
 endif()
 
-install(TARGETS photosphere-cli RUNTIME DESTINATION bin)
+include(GNUInstallDirs)
+install(TARGETS photosphere-cli RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR})
+install(FILES assets/photosphere-linux.desktop
+        DESTINATION ${CMAKE_INSTALL_DATADIR}/applications)
+install(FILES assets/icon.png
+        DESTINATION ${CMAKE_INSTALL_DATADIR}/icons/hicolor/512x512/apps
+        RENAME photosphere-linux.png)

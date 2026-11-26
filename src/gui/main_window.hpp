@@ -27,9 +27,11 @@ public:
 
 private slots:
     void addFiles();
+    void addFolder();
     void removeSelected();
     void runStitch();
     void autoStitchAll();
+    void renderVideo();
     void savePanorama();
     void saveLittlePlanet();
     void saveTagged();
@@ -44,7 +46,10 @@ private:
     QSpinBox* widthSpin_ = nullptr;
     QDoubleSpinBox* fovSpin_ = nullptr;
     QSpinBox* maxFramesSpin_ = nullptr;
+    QSpinBox* videoStepSpin_ = nullptr;
+    QSpinBox* outputFpsSpin_ = nullptr;
     QCheckBox* multibandCheck_ = nullptr;
+    QCheckBox* refineCheck_ = nullptr;
     QComboBox* flipCombo_ = nullptr;
     QLabel* statusLabel_ = nullptr;
     QPlainTextEdit* logEdit_ = nullptr;

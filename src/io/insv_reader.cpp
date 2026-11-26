@@ -94,6 +94,31 @@ bool openSoftwareDecoder(DecoderState& state, const AVCodec* codec,
     return true;
 }
 
+// ffmpeg still reports full range HEVC as the deprecated YUVJ formats.
+// Swscale warns about them, so use the equivalent non deprecated format and
+// tell swscale the source is full range.
+AVPixelFormat softwarePixelFormat(AVPixelFormat format) {
+    switch (format) {
+        case AV_PIX_FMT_YUVJ420P: return AV_PIX_FMT_YUV420P;
+        case AV_PIX_FMT_YUVJ422P: return AV_PIX_FMT_YUV422P;
+        case AV_PIX_FMT_YUVJ444P: return AV_PIX_FMT_YUV444P;
+        case AV_PIX_FMT_YUVJ440P: return AV_PIX_FMT_YUV440P;
+        default: return format;
+    }
+}
+
+bool isFullRange(AVPixelFormat format) {
+    return format == AV_PIX_FMT_YUVJ420P || format == AV_PIX_FMT_YUVJ422P ||
+           format == AV_PIX_FMT_YUVJ444P || format == AV_PIX_FMT_YUVJ440P;
+}
+
+void applyFullRange(SwsContext* context, bool fullRange) {
+    if (!fullRange) return;
+    sws_setColorspaceDetails(context, sws_getCoefficients(SWS_CS_ITU601), 1,
+                             sws_getCoefficients(SWS_CS_DEFAULT), 0,
+                             0, 1 << 16, 1 << 16);
+}
+
 AVFrame* cpuFrame(AVFrame* decoded, AVFrame* scratch, AVPixelFormat hwFormat) {
     if (decoded->format != hwFormat) return decoded;
     return av_hwframe_transfer_data(scratch, decoded, 0) >= 0 ? scratch : decoded;
@@ -235,10 +260,12 @@ bool readInsvAtTimes(const std::string& path, const std::vector<double>& times,
                     const int w = ready->width, h = ready->height;
                     cv::Mat bgr(h, w, CV_8UC3);
                     if (!decoders[decoderIndex].sws) {
+                        const auto source = static_cast<AVPixelFormat>(ready->format);
                         decoders[decoderIndex].sws = sws_getContext(
-                            w, h, static_cast<AVPixelFormat>(ready->format),
+                            w, h, softwarePixelFormat(source),
                             w, h, AV_PIX_FMT_BGR24, SWS_BILINEAR,
                             nullptr, nullptr, nullptr);
+                        applyFullRange(decoders[decoderIndex].sws, isFullRange(source));
                     }
                     uint8_t* dst[] = {bgr.data};
                     int stride[] = {static_cast<int>(bgr.step)};
@@ -366,9 +393,11 @@ bool readInsv(const std::string& path, std::vector<LensFrame>& out,
                 const int w = ready->width, h = ready->height;
                 cv::Mat bgr(h, w, CV_8UC3);
                 if (!decoder.sws) {
-                    decoder.sws = sws_getContext(w, h, static_cast<AVPixelFormat>(ready->format),
+                    const auto source = static_cast<AVPixelFormat>(ready->format);
+                    decoder.sws = sws_getContext(w, h, softwarePixelFormat(source),
                                                  w, h, AV_PIX_FMT_BGR24, SWS_BILINEAR,
                                                  nullptr, nullptr, nullptr);
+                    applyFullRange(decoder.sws, isFullRange(source));
                 }
                 uint8_t* dst[] = {bgr.data};
                 int dstLine[] = {static_cast<int>(bgr.step)};

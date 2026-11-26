@@ -4,16 +4,20 @@
 #include "core/gpu_info.hpp"
 #include "core/little_planet.hpp"
 #include "core/stitcher.hpp"
+#include "io/exif_pose.hpp"
 #include "io/frame_store.hpp"
 #include "io/insv_reader.hpp"
+#include "io/video_writer.hpp"
 
 #include <opencv2/imgcodecs.hpp>
+#include <opencv2/imgproc.hpp>
 
 #include <QApplication>
 #include <QClipboard>
 #include <QDir>
 #include <QFileDialog>
 #include <QHBoxLayout>
+#include <QIcon>
 #include <QKeySequence>
 #include <QLabel>
 #include <QListWidgetItem>
@@ -107,6 +111,7 @@ QString lastDir() {
 
 MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent) {
     setWindowTitle("PhotoSphere Linux");
+    setWindowIcon(QIcon(":/icons/icon.png"));
     resize(1400, 900);
 
     auto* central = new QWidget(this);
@@ -125,11 +130,13 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent) {
     left->addWidget(fileList_, 1);
 
     auto* addButton = new QPushButton("Add images or INSV video", controls);
+    auto* addFolderButton = new QPushButton("Add folder of images", controls);
     auto* removeButton = new QPushButton("Remove selected", controls);
     auto* stitchButton = new QPushButton("Stitch", controls);
     stitchButton->setDefault(true);
     stitchButton->setStyleSheet("font-weight: bold; padding: 6px;");
     left->addWidget(addButton);
+    left->addWidget(addFolderButton);
     left->addWidget(removeButton);
     left->addWidget(stitchButton);
 
@@ -152,9 +159,23 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent) {
     left->addWidget(new QLabel("Video frames (0 = all)"));
     left->addWidget(maxFramesSpin_);
 
+    videoStepSpin_ = new QSpinBox(controls);
+    videoStepSpin_->setRange(1, 500);
+    videoStepSpin_->setValue(25);
+    left->addWidget(new QLabel("Video frame step (1 = every frame)"));
+    left->addWidget(videoStepSpin_);
+
+    outputFpsSpin_ = new QSpinBox(controls);
+    outputFpsSpin_->setRange(1, 120);
+    outputFpsSpin_->setValue(60);
+    left->addWidget(new QLabel("Export video fps"));
+    left->addWidget(outputFpsSpin_);
+
     multibandCheck_ = new QCheckBox("Multiband blending", controls);
     multibandCheck_->setChecked(true);
     left->addWidget(multibandCheck_);
+    refineCheck_ = new QCheckBox("Refine poses from image features", controls);
+    left->addWidget(refineCheck_);
 
     flipCombo_ = new QComboBox(controls);
     flipCombo_->addItem("Automatic orientation");
@@ -163,12 +184,14 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent) {
     left->addWidget(new QLabel("Lens orientation"));
     left->addWidget(flipCombo_);
 
+    auto* renderButton = new QPushButton("Render stitched video (MP4)", controls);
     auto* autoButton = new QPushButton("Auto stitch all files", controls);
     autoButton->setStyleSheet("font-weight: bold;");
     auto* fullscreenButton = new QPushButton("Fullscreen preview", controls);
     auto* savePano = new QPushButton("Save panorama", controls);
     auto* savePlanet = new QPushButton("Save little planet", controls);
     auto* saveTagged = new QPushButton("Save with GPano metadata", controls);
+    left->addWidget(renderButton);
     left->addWidget(autoButton);
     left->addWidget(fullscreenButton);
     left->addWidget(savePano);
@@ -219,8 +242,10 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent) {
     logMessage(QString::fromStdString(describeGpu(detectGpu())));
 
     connect(addButton, &QPushButton::clicked, this, &MainWindow::addFiles);
+    connect(addFolderButton, &QPushButton::clicked, this, &MainWindow::addFolder);
     connect(removeButton, &QPushButton::clicked, this, &MainWindow::removeSelected);
     connect(stitchButton, &QPushButton::clicked, this, &MainWindow::runStitch);
+    connect(renderButton, &QPushButton::clicked, this, &MainWindow::renderVideo);
     connect(autoButton, &QPushButton::clicked, this, &MainWindow::autoStitchAll);
     connect(fullscreenButton, &QPushButton::clicked, this, &MainWindow::openFullscreen);
     connect(savePano, &QPushButton::clicked, this, &MainWindow::savePanorama);
@@ -262,6 +287,37 @@ void MainWindow::addFiles() {
     }
 }
 
+void MainWindow::addFolder() {
+    const QString dir = QFileDialog::getExistingDirectory(
+        this, "Select a folder of photos or videos", lastDir());
+    if (dir.isEmpty()) return;
+    const QStringList names = QDir(dir).entryList(
+        {"*.jpg", "*.jpeg", "*.png", "*.dng", "*.insv", "*.mp4", "*.mov"},
+        QDir::Files);
+    std::vector<std::pair<int, QString>> ordered;
+    ordered.reserve(static_cast<size_t>(names.size()));
+    int fallback = 100000;
+    for (const auto& name : names) {
+        const QString path = QDir(dir).filePath(name);
+        io::ExifPose pose;
+        const int key = io::readExifPose(path.toStdString(), pose) && pose.index >= 0
+                            ? pose.index
+                            : fallback++;
+        ordered.emplace_back(key, path);
+    }
+    std::stable_sort(ordered.begin(), ordered.end(),
+                     [](const auto& a, const auto& b) { return a.first < b.first; });
+    int added = 0;
+    for (const auto& [key, path] : ordered) {
+        if (fileList_->findItems(path, Qt::MatchExactly).isEmpty()) {
+            fileList_->addItem(path);
+            ++added;
+        }
+    }
+    logMessage("Added " + QString::number(added) + " files from " + dir +
+               " in capture order");
+}
+
 void MainWindow::removeSelected() {
     for (QListWidgetItem* item : fileList_->selectedItems()) delete item;
 }
@@ -288,6 +344,7 @@ void MainWindow::runStitch() {
     options.width = widthSpin_->value();
     options.fisheyeFovDegrees = fovSpin_->value();
     options.multiband = multibandCheck_->isChecked();
+    options.refinePoses = refineCheck_->isChecked();
     options.flipLenses = flipCombo_->currentIndex() == 1
                              ? true
                              : (flipCombo_->currentIndex() == 2
@@ -331,6 +388,7 @@ void MainWindow::autoStitchAll() {
     options.width = widthSpin_->value();
     options.fisheyeFovDegrees = fovSpin_->value();
     options.multiband = multibandCheck_->isChecked();
+    options.refinePoses = refineCheck_->isChecked();
     options.flipLenses = flipCombo_->currentIndex() == 1
                              ? true
                              : (flipCombo_->currentIndex() == 2
@@ -367,6 +425,65 @@ void MainWindow::autoStitchAll() {
     viewer_->setPanorama(panorama_);
     viewer_->resetView();
     setStatus("Auto stitch: " + QString::number(index) + " panoramas saved to " + dir);
+}
+
+void MainWindow::renderVideo() {
+    std::string videoPath;
+    for (const auto& path : inputPaths())
+        if (io::isInsvFile(path)) { videoPath = path; break; }
+    if (videoPath.empty()) {
+        QMessageBox::warning(this, "No video", "Add an INSV or MP4 file first.");
+        return;
+    }
+    const QString output = QFileDialog::getSaveFileName(
+        this, "Export stitched video", lastDir(), "MP4 (*.mp4)");
+    if (output.isEmpty()) return;
+
+    int width = widthSpin_->value();
+    if (width & 1) --width;
+    StitchOptions options;
+    options.width = width;
+    options.fisheyeFovDegrees = fovSpin_->value();
+    options.multiband = multibandCheck_->isChecked();
+    options.flipLenses = autoFlipFor(videoPath);
+    if (flipCombo_->currentIndex() == 1) options.flipLenses = true;
+    if (flipCombo_->currentIndex() == 2) options.flipLenses = false;
+
+    setStatus("Decoding video frames...");
+    QApplication::setOverrideCursor(Qt::WaitCursor);
+    std::vector<LensFrame> frames;
+    std::string error;
+    const bool decoded = io::readInsv(videoPath, frames, 0,
+                                      videoStepSpin_->value(), error);
+    if (decoded) {
+        for (auto& frame : frames)
+            if (frame.image.cols > 2048)
+                cv::resize(frame.image, frame.image, cv::Size(2048, 2048),
+                           0.0, 0.0, cv::INTER_AREA);
+        io::Mp4Writer writer(output.toStdString(), width, width / 2,
+                             outputFpsSpin_->value());
+        if (!writer.open(error)) {
+            QMessageBox::critical(this, "Export failed", QString::fromStdString(error));
+        } else {
+            int written = 0;
+            for (size_t i = 0; i + 1 < frames.size(); i += 2) {
+                if (frames[i].lens == frames[i + 1].lens) continue;
+                std::string diagnostics;
+                const Panorama pano = stitchDualFisheye(
+                    {frames[i], frames[i + 1]}, options, diagnostics);
+                if (pano.equirect.empty()) continue;
+                if (!writer.write(pano.equirect, error)) break;
+                ++written;
+                if ((written % 5) == 0)
+                    logMessage(QString::number(written) + " panorama frames encoded");
+            }
+            writer.finish();
+            setStatus("Exported " + QString::number(written) + " panorama frames to " + output);
+        }
+    }
+    QApplication::restoreOverrideCursor();
+    if (!decoded || !error.empty())
+        logMessage(QString::fromStdString("Warning: " + error));
 }
 
 void MainWindow::openFullscreen() {

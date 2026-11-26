@@ -40,6 +40,10 @@ CLI plus GUI:
     # Stitch a side by side dual fisheye JPEG
     ./build/photosphere-cli stitch -w 4096 -o pano.jpg frame.jpg
 
+    # Stitch a ring of ordinary photos using EXIF poses and FOV
+    ./build/photosphere-cli stitch -o pano.jpg photo_01.jpg photo_02.jpg ...
+    # Add --refine to also align poses from image features
+
     # Stitch the first frame pair of an INSV video
     ./build/photosphere-cli stitch --max-frames 1 -o pano.jpg clip.insv
 

@@ -1,6 +1,7 @@
 #include "io/frame_store.hpp"
 
 #include "core/stitcher.hpp"
+#include "io/exif_pose.hpp"
 #include "io/image_io.hpp"
 #include "io/insv_reader.hpp"
 
@@ -58,6 +59,18 @@ bool loadInputs(const std::vector<std::string>& paths, InputSession& out,
                 f.lens = static_cast<int>(lens);
                 f.source = path;
                 f.sequence = sequence++;
+                ExifPose pose;
+                if (images.size() == 1 && readExifPose(path, pose)) {
+                    f.hasPose = true;
+                    f.captureIndex = pose.index;
+                    f.yawDegrees = pose.yawDegrees;
+                    f.pitchDegrees = pose.pitchDegrees;
+                    f.rollDegrees = pose.rollDegrees;
+                    f.horizontalFovDegrees = pose.horizontalFovDegrees;
+                    f.verticalFovDegrees = pose.verticalFovDegrees;
+                    f.cameraMatrix = pose.matrix;
+                    f.hasCameraMatrix = pose.hasMatrix;
+                }
                 out.frames.push_back(std::move(f));
             }
             out.description += "STILL " + path + " ";
