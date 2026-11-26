@@ -82,6 +82,10 @@ bool hasFlag(int argc, char** argv, const std::string& name) {
     return false;
 }
 
+bool optionProvided(int argc, char** argv, const std::string& name) {
+    return hasFlag(argc, argv, name);
+}
+
 double numberOption(int argc, char** argv, const std::string& name, double fallback) {
     const std::string v = optionValue(argc, argv, name);
     if (v.empty()) return fallback;
@@ -215,13 +219,17 @@ bool cmdVideo(int argc, char** argv) {
         std::cerr << "video: need -i VIDEO.insv -o OUT.mp4\n";
         return false;
     }
-    // By default stitch every source frame, so the result is real video.
-    const double everySeconds = numberOption(argc, argv, "--every",
-                                             1.0 / ps::io::insvFrameRate(input));
-    // Export keeps the frame rate of the original video unless overridden.
-    const double fps = numberOption(argc, argv, "--fps",
-                                    ps::io::insvFrameRate(input));
+    const double sourceFps = ps::io::insvFrameRate(input);
+    // By default stitch every source frame. When frames are skipped, the
+    // output rate follows the sampling so the whole duration is covered.
+    const double everySeconds = optionProvided(argc, argv, "--every")
+                                    ? numberOption(argc, argv, "--every",
+                                                   1.0 / sourceFps)
+                                    : 1.0 / sourceFps;
     const double duration = ps::io::insvDuration(input);
+    const double fps = optionProvided(argc, argv, "--fps")
+                           ? numberOption(argc, argv, "--fps", sourceFps)
+                           : 1.0 / everySeconds;
     std::vector<double> times;
     for (double t = 0.0; t < duration; t += everySeconds) times.push_back(t);
     if (times.empty()) times.push_back(0.0);
@@ -243,7 +251,7 @@ bool cmdVideo(int argc, char** argv) {
     std::string error;
     ps::io::Mp4Writer writer(output, width, width / 2, fps);
     writer.setAudioSource(input, 0.0,
-                          static_cast<double>(times.size()) * everySeconds);
+                          static_cast<double>(times.size()) / fps);
     if (!writer.open(error)) { std::cerr << "video: " << error << "\n"; return false; }
     std::cout << "duration=" << duration << " s, " << times.size()
               << " equirectangular frames, " << width << "x" << width / 2 << " @ " << fps

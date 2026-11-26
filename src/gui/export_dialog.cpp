@@ -31,9 +31,10 @@ ExportDialog::ExportDialog(double durationSeconds, double sourceFps,
     stepSpin_->setSuffix(" source frames");
 
     fpsSpin_ = new QDoubleSpinBox(this);
-    fpsSpin_->setRange(1.0, 120.0);
+    fpsSpin_->setRange(0.01, 120.0);
     fpsSpin_->setValue(sourceFps > 0 ? sourceFps : 25.0);
     fpsSpin_->setSuffix(" fps");
+    fpsSpin_->setReadOnly(true);
 
     startSpin_ = new QDoubleSpinBox(this);
     startSpin_->setRange(0.0, std::max(0.0, durationSeconds));
@@ -79,6 +80,7 @@ ExportDialogOptions ExportDialog::options() const {
     out.endTime = endSpin_->value();
     out.output = outputEdit_->text();
     out.everySeconds = stepSpin_->value() / sourceFps_;
+    out.fps = sourceFps_ / static_cast<double>(std::max(1, stepSpin_->value()));
     return out;
 }
 
