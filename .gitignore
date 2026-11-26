@@ -1,0 +1,31 @@
+# User requested ignores
+out/
+photosphere-gui
+ps_tests
+photosphere-cli
+AGENTS.md
+
+# Generated build files (build directories themselves are kept)
+CMakeCache.txt
+CMakeFiles/
+cmake_install.cmake
+CTestTestfile.cmake
+*_autogen/
+.qt/
+*.d
+build.ninja
+.ninja_deps
+.ninja_log
+Makefile
+*.o
+*.a
+*.so
+*.exe
+*.pdb
+
+# Editor and OS files
+.vscode/
+.idea/
+.DS_Store
+*~
+*.swp
