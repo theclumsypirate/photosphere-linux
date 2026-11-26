@@ -36,6 +36,7 @@
 #include <QPlainTextEdit>
 #include <QPointer>
 #include <QProcess>
+#include <QProcessEnvironment>
 #include <QPushButton>
 #include <QScrollArea>
 #include <QShortcut>
@@ -326,7 +327,8 @@ void MainWindow::setStatus(const QString& text) {
 }
 
 QStringList MainWindow::chooseFilesExternal(bool folder) const {
-    const QString command = appSettings_.externalCommand;
+    const bool useZenity = appSettings_.externalCommand.contains("zenity");
+    const QString command = useZenity ? "zenity" : "kdialog";
     QStringList args;
     if (command.contains("zenity")) {
         args << (folder ? "--selection" : "--file-selection");
@@ -341,10 +343,27 @@ QStringList MainWindow::chooseFilesExternal(bool folder) const {
                  << "*.dng *.jpg *.jpeg *.png *.insv *.mp4 *.mov *.mkv";
     }
     QProcess process;
+    // The AppImage exports LD_LIBRARY_PATH and Qt plugin paths for its own
+    // libraries. A system tool such as kdialog must not inherit them.
+    QProcessEnvironment environment = QProcessEnvironment::systemEnvironment();
+    environment.remove("LD_LIBRARY_PATH");
+    environment.remove("QT_PLUGIN_PATH");
+    environment.remove("QT_QPA_PLATFORM_PLUGIN_PATH");
+    environment.remove("QT_QPA_PLATFORM");
+    process.setProcessEnvironment(environment);
     process.start(command, args);
-    if (!process.waitForFinished(-1)) return {};
+    if (!process.waitForFinished(-1)) {
+        logMessage("Dialog failed to start: " + process.errorString());
+        return {};
+    }
     const QString output = QString::fromLocal8Bit(process.readAllStandardOutput()).trimmed();
-    if (output.isEmpty()) return {};
+    if (output.isEmpty()) {
+        const QString errorOutput =
+            QString::fromLocal8Bit(process.readAllStandardError()).trimmed();
+        if (!errorOutput.isEmpty())
+            logMessage("Dialog error: " + errorOutput.left(300));
+        return {};
+    }
     QStringList paths;
     for (const auto& line : output.split('\n', Qt::SkipEmptyParts)) {
         QString path = line.trimmed();
@@ -555,7 +574,6 @@ void MainWindow::runStitch() {
                     QMessageBox::critical(this, "Stitch failed", message);
                 }
                 setStatus(message);
-                logMessage(QString::fromStdString(worker->diagnostics()));
                 stitchThread_->quit();
             });
     connect(stitchThread_, &QThread::finished, worker, &QObject::deleteLater);

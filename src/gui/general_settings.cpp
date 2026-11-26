@@ -22,6 +22,9 @@ AppSettings loadAppSettings() {
     AppSettings out;
     out.fileExplorer = settings.value("fileExplorer", "qt").toString();
     out.externalCommand = settings.value("externalCommand", "kdialog").toString();
+    // Older versions stored "dolphin" here. That was the app, not a dialog.
+    if (out.externalCommand.isEmpty() || out.externalCommand.contains("dolphin"))
+        out.externalCommand = "kdialog";
     out.exposureEV = settings.value("exposureEV", 0.0).toDouble();
     out.autoBright = settings.value("autoBright", true).toBool();
     out.forceX11 = settings.value("forceX11", false).toBool();
