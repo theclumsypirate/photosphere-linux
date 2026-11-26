@@ -57,7 +57,7 @@ private:
     std::vector<std::string> inputPaths() const;
     void setStatus(const QString& text);
     void logMessage(const QString& text);
-    QStringList chooseFilesExternal(bool folder) const;
+    QStringList chooseFilesExternal(bool folder);
 
     QListWidget* fileList_ = nullptr;
     QSpinBox* widthSpin_ = nullptr;

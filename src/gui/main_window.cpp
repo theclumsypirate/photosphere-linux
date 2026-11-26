@@ -326,7 +326,7 @@ void MainWindow::setStatus(const QString& text) {
     logMessage(text);
 }
 
-QStringList MainWindow::chooseFilesExternal(bool folder) const {
+QStringList MainWindow::chooseFilesExternal(bool folder) {
     const bool useZenity = appSettings_.externalCommand.contains("zenity");
     const QString command = useZenity ? "zenity" : "kdialog";
     QStringList args;
