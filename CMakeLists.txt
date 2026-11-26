@@ -112,6 +112,10 @@ endif()
 
 include(GNUInstallDirs)
 install(TARGETS photosphere-cli RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR})
+install(FILES LICENSE THIRD_PARTY_LICENSES.md
+        DESTINATION ${CMAKE_INSTALL_DATADIR}/doc/photosphere-linux)
+install(DIRECTORY licenses/
+        DESTINATION ${CMAKE_INSTALL_DATADIR}/licenses/photosphere-linux)
 install(FILES assets/photosphere-linux.desktop
         DESTINATION ${CMAKE_INSTALL_DATADIR}/applications)
 install(FILES assets/icon.png

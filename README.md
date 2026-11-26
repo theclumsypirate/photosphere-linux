@@ -26,4 +26,6 @@ This is a simple app with a GUI for automatic stitching images or videos.
 
 ## License
 
-[MIT](LICENSE)
+The source code is [MIT](LICENSE). The AppImage bundles third-party libraries
+under their own licenses, including GPL components. See
+[THIRD_PARTY_LICENSES.md](THIRD_PARTY_LICENSES.md).
