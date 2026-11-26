@@ -129,7 +129,9 @@ void ViewerWidget::setPanorama(const cv::Mat& bgr) {
     makeCurrent();
     cv::Mat rgb;
     cv::cvtColor(bgr, rgb, cv::COLOR_BGR2RGB);
-    if (!hasTexture_) {
+    if (!hasTexture_ || texture_.width() != rgb.cols ||
+        texture_.height() != rgb.rows) {
+        texture_.destroy();
         texture_.setSize(rgb.cols, rgb.rows);
         texture_.setFormat(QOpenGLTexture::RGB8_UNorm);
         texture_.allocateStorage();

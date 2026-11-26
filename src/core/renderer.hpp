@@ -2,6 +2,7 @@
 
 #include <opencv2/core.hpp>
 
+#include <functional>
 #include <vector>
 
 #include "core/lens_model.hpp"
@@ -30,6 +31,7 @@ struct RenderOptions {
     double centerLatitudeDegrees = 0.0;
     double pivotRatio = 0.0;
     bool multiband = true;
+    std::function<void(int, int)> onProgress;
 };
 
 Panorama renderPanorama(const std::vector<PreparedFrame>& frames,

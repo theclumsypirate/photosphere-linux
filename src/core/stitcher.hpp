@@ -1,5 +1,6 @@
 #pragma once
 
+#include <functional>
 #include <string>
 #include <vector>
 
@@ -19,6 +20,7 @@ struct StitchOptions {
     bool useSeams = false;
     bool dropOutliers = true;
     bool useLocalWarp = true;
+    std::function<void(int, int)> onProgress;
     int maxFrames = 0;
 };
 

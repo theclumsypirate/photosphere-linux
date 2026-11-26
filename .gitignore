@@ -1,5 +1,6 @@
 # User requested ignores
 out/
+tests/bugs/
 photosphere-gui
 ps_tests
 photosphere-cli

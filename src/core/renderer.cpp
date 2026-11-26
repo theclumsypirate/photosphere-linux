@@ -134,6 +134,7 @@ Panorama renderPanorama(const std::vector<PreparedFrame>& frames,
         pl.weight = cv::Mat::zeros(lh, lw, CV_32FC1);
         accumulateLevel(frames, pl.color, pl.weight, options, level, seams, covered);
         pyramid.push_back(std::move(pl));
+        if (options.onProgress) options.onProgress(level + 1, levels);
     }
     if (levels == 1) {
         out.equirect = normalizeColor(pyramid[0].color, pyramid[0].weight);

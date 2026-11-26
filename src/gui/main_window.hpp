@@ -18,6 +18,7 @@
 #include <string>
 #include <vector>
 
+#include "gui/general_settings.hpp"
 #include "gui/viewer_widget.hpp"
 
 namespace ps::gui {
@@ -40,6 +41,8 @@ private slots:
     void renderVideo();
     void quickExport();
     void updateExportButton();
+    void openGeneralSettings();
+    void pasteFromClipboard();
     void savePanorama();
     void saveLittlePlanet();
     void saveTagged();
@@ -70,9 +73,12 @@ private:
     QPushButton* exportButton_ = nullptr;
     ViewerWidget* viewer_ = nullptr;
     cv::Mat panorama_;
+    QThread* stitchThread_ = nullptr;
+    QProgressDialog* stitchProgress_ = nullptr;
     QThread* exportThread_ = nullptr;
     QProgressDialog* exportProgress_ = nullptr;
     std::atomic<bool> exportCancel_{false};
+    AppSettings appSettings_;
 };
 
 } // namespace ps::gui

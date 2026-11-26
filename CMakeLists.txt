@@ -101,6 +101,8 @@ if(PS_BUILD_GUI)
     src/gui/main_window.cpp
     src/gui/viewer_widget.cpp
     src/gui/export_dialog.cpp
+    src/gui/general_settings.cpp
+    src/gui/stitch_worker.cpp
     src/gui/video_export_worker.cpp
     src/gui/resources.qrc)
   target_link_libraries(photosphere-gui PRIVATE

@@ -3,6 +3,8 @@
 #include "core/gpano.hpp"
 #include "core/gpu_info.hpp"
 #include "gui/export_dialog.hpp"
+#include "gui/general_settings.hpp"
+#include "gui/stitch_worker.hpp"
 #include "gui/video_export_worker.hpp"
 #include "core/little_planet.hpp"
 #include "core/stitcher.hpp"
@@ -21,6 +23,7 @@
 #include <QDropEvent>
 #include <QFileDialog>
 #include <QFileInfo>
+#include <QIcon>
 #include <QMimeData>
 #include <QHBoxLayout>
 #include <QIcon>
@@ -31,6 +34,7 @@
 #include <QMessageBox>
 #include <QPlainTextEdit>
 #include <QPointer>
+#include <QProcess>
 #include <QPushButton>
 #include <QScrollArea>
 #include <QShortcut>
@@ -127,6 +131,7 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent) {
     setAcceptDrops(true);
     resize(1780, 1020);
     setMinimumSize(1500, 900);
+    appSettings_ = loadAppSettings();
 
     auto* central = new QWidget(this);
     auto* mainLayout = new QVBoxLayout(central);
@@ -146,6 +151,12 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent) {
     auto* left = new QVBoxLayout(controls);
     left->setContentsMargins(4, 4, 4, 4);
     left->setSpacing(6);
+    auto* settingsButton = new QPushButton(controls);
+    settingsButton->setIcon(QIcon::fromTheme(
+        "preferences-system", QIcon::fromTheme("configure")));
+    settingsButton->setToolTip("General settings");
+    settingsButton->setMinimumWidth(44);
+    left->addWidget(settingsButton, 0, Qt::AlignRight);
     left->addWidget(new QLabel("Input files, folders or drag and drop", controls));
     fileList_ = new QListWidget(controls);
     fileList_->setSelectionMode(QAbstractItemView::ExtendedSelection);
@@ -154,12 +165,14 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent) {
 
     auto* addButton = new QPushButton("Add images or INSV video", controls);
     auto* addFolderButton = new QPushButton("Add folder of images", controls);
+    auto* pasteButton = new QPushButton("Paste files from clipboard", controls);
     auto* removeButton = new QPushButton("Remove selected", controls);
     auto* stitchButton = new QPushButton("Stitch", controls);
     stitchButton->setDefault(true);
     stitchButton->setStyleSheet("font-weight: bold; padding: 6px;");
     left->addWidget(addButton);
     left->addWidget(addFolderButton);
+    left->addWidget(pasteButton);
     left->addWidget(removeButton);
     left->addWidget(stitchButton);
 
@@ -275,6 +288,8 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent) {
 
     connect(addButton, &QPushButton::clicked, this, &MainWindow::addFiles);
     connect(addFolderButton, &QPushButton::clicked, this, &MainWindow::addFolder);
+    connect(pasteButton, &QPushButton::clicked, this, &MainWindow::pasteFromClipboard);
+    connect(settingsButton, &QPushButton::clicked, this, &MainWindow::openGeneralSettings);
     connect(removeButton, &QPushButton::clicked, this, &MainWindow::removeSelected);
     connect(stitchButton, &QPushButton::clicked, this, &MainWindow::runStitch);
     connect(renderButton, &QPushButton::clicked, this, &MainWindow::renderVideo);
@@ -308,6 +323,12 @@ void MainWindow::setStatus(const QString& text) {
 }
 
 void MainWindow::addFiles() {
+    if (appSettings_.fileExplorer == "external") {
+        QProcess::startDetached(appSettings_.externalCommand, {lastDir()});
+        setStatus("Opened " + appSettings_.externalCommand +
+                  ". Drag files into this window, or use Paste files from clipboard.");
+        return;
+    }
     const QStringList files = QFileDialog::getOpenFileNames(
         this, "Select images or INSV video", lastDir(),
         "Images and video (*.dng *.jpg *.jpeg *.png *.insv *.mp4 *.mov *.mkv);;"
@@ -357,6 +378,12 @@ void MainWindow::dropEvent(QDropEvent* event) {
 }
 
 void MainWindow::addFolder() {
+    if (appSettings_.fileExplorer == "external") {
+        QProcess::startDetached(appSettings_.externalCommand, {lastDir()});
+        setStatus("Opened " + appSettings_.externalCommand +
+                  ". Drag a folder into this window to add it.");
+        return;
+    }
     const QString dir = QFileDialog::getExistingDirectory(
         this, "Select a folder of photos or videos", lastDir());
     if (dir.isEmpty()) return;
@@ -388,6 +415,30 @@ void MainWindow::addFolder() {
     updateExportButton();
 }
 
+void MainWindow::openGeneralSettings() {
+    GeneralSettingsDialog dialog(this);
+    if (dialog.exec() == QDialog::Accepted) {
+        appSettings_ = dialog.settings();
+        saveAppSettings(appSettings_);
+        setStatus("Settings saved. File explorer: " +
+                  (appSettings_.fileExplorer == "external"
+                       ? appSettings_.externalCommand
+                       : "Qt file dialog"));
+    }
+}
+
+void MainWindow::pasteFromClipboard() {
+    const QMimeData* mime = QApplication::clipboard()->mimeData();
+    if (!mime || !mime->hasUrls()) {
+        setStatus("Clipboard has no file paths");
+        return;
+    }
+    QStringList paths;
+    for (const auto& url : mime->urls())
+        if (url.isLocalFile()) paths.append(url.toLocalFile());
+    addPaths(paths);
+}
+
 void MainWindow::removeSelected() {
     for (QListWidgetItem* item : fileList_->selectedItems()) delete item;
     updateExportButton();
@@ -401,59 +452,73 @@ void MainWindow::updateExportButton() {
 }
 
 void MainWindow::runStitch() {
+    if (stitchThread_) {
+        QMessageBox::information(this, "Stitching", "A stitch is already running.");
+        return;
+    }
     const auto paths = inputPaths();
     if (paths.empty()) {
         QMessageBox::warning(this, "No input", "Add at least one file.");
         return;
     }
-    setStatus("Loading inputs...");
-    io::InputSession session;
-    std::string error;
-    // A single still panorama never needs every frame of an added video.
-    // Full video sampling belongs to the render button.
-    const int maxFrames = std::max(1, maxFramesSpin_->value());
-    if (!io::loadInputs(paths, session, error, maxFrames)) {
-        setStatus(QString::fromStdString("Error: " + error));
-        QMessageBox::critical(this, "Input error", QString::fromStdString(error));
-        return;
-    }
-    logMessage("Loaded " + QString::number(session.frames.size()) + " lens frames: " +
-               QString::fromStdString(session.description));
 
-    StitchOptions options;
-    options.width = widthSpin_->value();
-    options.fisheyeFovDegrees = fovSpin_->value();
-    options.multiband = multibandCheck_->isChecked();
-    options.refinePoses = refineCheck_->isChecked();
-    options.useSeams = seamsCheck_->isChecked();
-    options.useLocalWarp = warpCheck_->isChecked();
-    options.flipLenses = flipCombo_->currentIndex() == 1
-                             ? true
-                             : (flipCombo_->currentIndex() == 2
-                                    ? false
-                                    : autoFlipForAll(paths));
-    setStatus("Stitching " + QString::number(session.frames.size()) + " lens frames...");
-    QApplication::setOverrideCursor(Qt::WaitCursor);
-    std::string diagnostics;
-    Panorama pano;
-    try {
-        pano = stitchSession(session, options, diagnostics);
-    } catch (const std::exception& e) {
-        error = e.what();
-    } catch (...) {
-        error = "unknown exception during stitching";
-    }
-    QApplication::restoreOverrideCursor();
-    if (!error.empty() || pano.equirect.empty()) {
-        const QString message = QString::fromStdString(error.empty() ? diagnostics : error);
-        setStatus("Error: " + message);
-        QMessageBox::critical(this, "Stitch failed", message);
-        return;
-    }
-    panorama_ = pano.equirect;
-    viewer_->setPanorama(panorama_);
-    viewer_->resetView();
-    setStatus(QString::fromStdString(diagnostics));
+    StitchWorker::Options options;
+    options.paths = paths;
+    options.maxVideoFrames = std::max(1, maxFramesSpin_->value());
+    options.stitch.width = widthSpin_->value();
+    options.stitch.fisheyeFovDegrees = fovSpin_->value();
+    options.stitch.multiband = multibandCheck_->isChecked();
+    options.stitch.refinePoses = refineCheck_->isChecked();
+    options.stitch.useSeams = seamsCheck_->isChecked();
+    options.stitch.useLocalWarp = warpCheck_->isChecked();
+    options.stitch.flipLenses = flipCombo_->currentIndex() == 1
+                                    ? true
+                                    : (flipCombo_->currentIndex() == 2
+                                           ? false
+                                           : autoFlipForAll(paths));
+
+    stitchThread_ = new QThread(this);
+    auto* worker = new StitchWorker();
+    worker->moveToThread(stitchThread_);
+    worker->setOptions(options);
+
+    stitchProgress_ = new QProgressDialog("Preparing stitch...", QString(), 0, 10, this);
+    stitchProgress_->setWindowModality(Qt::WindowModal);
+    stitchProgress_->setMinimumDuration(0);
+    stitchProgress_->setValue(0);
+
+    connect(stitchThread_, &QThread::started, worker, &StitchWorker::run);
+    connect(worker, &StitchWorker::progress, this, [this](int done, int total,
+                                                          const QString& message) {
+        if (!stitchProgress_) return;
+        stitchProgress_->setMaximum(std::max(1, total));
+        stitchProgress_->setValue(done);
+        stitchProgress_->setLabelText(message);
+    });
+    connect(worker, &StitchWorker::finished, this,
+            [this, worker](bool ok, const QString& message) {
+                if (ok && !worker->result().equirect.empty()) {
+                    panorama_ = worker->result().equirect;
+                    viewer_->setPanorama(panorama_);
+                    viewer_->resetView();
+                } else if (!ok) {
+                    QMessageBox::critical(this, "Stitch failed", message);
+                }
+                setStatus(message);
+                logMessage(QString::fromStdString(worker->diagnostics()));
+                stitchThread_->quit();
+            });
+    connect(stitchThread_, &QThread::finished, worker, &QObject::deleteLater);
+    connect(stitchThread_, &QThread::finished, this, [this]() {
+        stitchThread_->deleteLater();
+        stitchThread_ = nullptr;
+        if (stitchProgress_) {
+            stitchProgress_->close();
+            stitchProgress_->deleteLater();
+            stitchProgress_ = nullptr;
+        }
+    });
+    stitchThread_->start();
 }
 
 void MainWindow::autoStitchAll() {

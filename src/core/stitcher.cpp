@@ -131,6 +131,7 @@ Panorama stitchDualFisheye(const std::vector<LensFrame>& pair,
         accumulateFisheyeLevel(*images[1], 1, options.fisheyeFovDegrees,
                                options.flipLenses, pl.color, pl.weight, divisor);
         pyramid.push_back(std::move(pl));
+        if (options.onProgress) options.onProgress(level + 1, levels);
     }
     out.equirect = levels == 1 ? normalizeColor(pyramid[0].color, pyramid[0].weight)
                                : reconstructPyramid(pyramid);
@@ -268,6 +269,7 @@ Panorama stitchMultiFrame(const std::vector<LensFrame>& frames,
     RenderOptions ro;
     ro.width = options.width;
     ro.multiband = options.multiband;
+    ro.onProgress = options.onProgress;
     diagnostics += ", gain";
     return renderPanorama(prepared, ro, activeSeams);
 }
