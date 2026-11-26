@@ -16,6 +16,8 @@ public:
     bool write(const cv::Mat& bgr, std::string& error);
     void finish();
 
+    static void setPreferHardwareEncoder(bool enabled);
+
     Mp4Writer(const Mp4Writer&) = delete;
     Mp4Writer& operator=(const Mp4Writer&) = delete;
 

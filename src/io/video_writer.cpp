@@ -10,8 +10,13 @@ extern "C" {
 }
 
 #include <algorithm>
+#include <vector>
 
 namespace ps::io {
+
+namespace {
+bool g_preferHardwareEncoder = true;
+}
 
 struct Mp4Writer::Impl {
     std::string path;
@@ -28,6 +33,10 @@ struct Mp4Writer::Impl {
     bool opened = false;
     bool finished = false;
 };
+
+void Mp4Writer::setPreferHardwareEncoder(bool enabled) {
+    g_preferHardwareEncoder = enabled;
+}
 
 Mp4Writer::Mp4Writer(const std::string& path, int width, int height, double fps)
     : impl_(new Impl{path, width, height, fps, nullptr, nullptr, nullptr, nullptr,
@@ -46,28 +55,48 @@ bool Mp4Writer::open(std::string& error) {
     int rc = avformat_alloc_output_context2(&impl_->format, nullptr, "mp4",
                                             impl_->path.c_str());
     if (rc < 0 || !impl_->format) { error = "cannot create MP4 output"; return false; }
-    const AVCodec* codec = avcodec_find_encoder(AV_CODEC_ID_H264);
-    if (!codec) codec = avcodec_find_encoder(AV_CODEC_ID_MPEG4);
-    if (!codec) { error = "no available video encoder"; return false; }
-    impl_->encoder = avcodec_alloc_context3(codec);
-    if (!impl_->encoder) { error = "cannot allocate encoder"; return false; }
-    auto* ctx = impl_->encoder;
-    ctx->codec_id = codec->id;
-    ctx->bit_rate = 12'000'000;
-    ctx->width = impl_->width;
-    ctx->height = impl_->height;
-    ctx->time_base = AVRational{1, std::max(1, static_cast<int>(impl_->fps))};
-    ctx->framerate = AVRational{std::max(1, static_cast<int>(impl_->fps)), 1};
-    ctx->gop_size = 25;
-    ctx->max_b_frames = 0;
-    ctx->pix_fmt = AV_PIX_FMT_YUV420P;
-    if (codec->pix_fmts) {
-        bool supported = false;
-        for (const AVPixelFormat* p = codec->pix_fmts; *p != AV_PIX_FMT_NONE; ++p)
-            if (*p == ctx->pix_fmt) supported = true;
-        if (!supported) ctx->pix_fmt = codec->pix_fmts[0];
+    std::vector<const AVCodec*> candidates;
+    if (g_preferHardwareEncoder) {
+        if (const AVCodec* nvenc = avcodec_find_encoder_by_name("h264_nvenc"))
+            candidates.push_back(nvenc);
     }
-    if (avcodec_open2(ctx, codec, nullptr) < 0) { error = "cannot open video encoder"; return false; }
+    if (const AVCodec* h264 = avcodec_find_encoder(AV_CODEC_ID_H264))
+        candidates.push_back(h264);
+    if (const AVCodec* mpeg4 = avcodec_find_encoder(AV_CODEC_ID_MPEG4))
+        candidates.push_back(mpeg4);
+    if (candidates.empty()) { error = "no available video encoder"; return false; }
+
+    const AVCodec* codec = nullptr;
+    std::string openError;
+    for (const AVCodec* candidate : candidates) {
+        AVCodecContext* context = avcodec_alloc_context3(candidate);
+        if (!context) continue;
+        context->codec_id = candidate->id;
+        context->bit_rate = 12'000'000;
+        context->width = impl_->width;
+        context->height = impl_->height;
+        context->time_base = AVRational{1, std::max(1, static_cast<int>(impl_->fps))};
+        context->framerate = AVRational{std::max(1, static_cast<int>(impl_->fps)), 1};
+        context->gop_size = 25;
+        context->max_b_frames = 0;
+        context->pix_fmt = AV_PIX_FMT_YUV420P;
+        if (candidate->pix_fmts) {
+            bool supported = false;
+            for (const AVPixelFormat* p = candidate->pix_fmts; *p != AV_PIX_FMT_NONE; ++p)
+                if (*p == context->pix_fmt) supported = true;
+            if (!supported) context->pix_fmt = candidate->pix_fmts[0];
+        }
+        if (avcodec_open2(context, candidate, nullptr) >= 0) {
+            impl_->encoder = context;
+            codec = candidate;
+            break;
+        }
+        openError = "cannot open video encoder";
+        avcodec_free_context(&context);
+    }
+    if (!impl_->encoder) { error = openError.empty() ? "cannot open video encoder" : openError; return false; }
+    auto* ctx = impl_->encoder;
+    (void)codec;
     impl_->stream = avformat_new_stream(impl_->format, nullptr);
     if (!impl_->stream) { error = "cannot create video stream"; return false; }
     if (avcodec_parameters_from_context(impl_->stream->codecpar, ctx) < 0) {
@@ -163,6 +192,8 @@ void Mp4Writer::finish() {
 namespace ps::io {
 
 struct Mp4Writer::Impl {};
+
+void Mp4Writer::setPreferHardwareEncoder(bool) {}
 
 Mp4Writer::Mp4Writer(const std::string&, int, int, double) : impl_(new Impl()) {}
 Mp4Writer::~Mp4Writer() { delete impl_; }

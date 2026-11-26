@@ -155,7 +155,7 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent) {
     left->setSpacing(6);
     auto* settingsButton = new QPushButton(controls);
     settingsButton->setIcon(QIcon::fromTheme(
-        "preferences-system", QIcon::fromTheme("configure")));
+        "preferences-system", QIcon(":/icons/settings.png")));
     settingsButton->setToolTip("General settings");
     settingsButton->setMinimumWidth(44);
     left->addWidget(settingsButton, 0, Qt::AlignRight);
@@ -296,6 +296,7 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent) {
     connect(stitchButton, &QPushButton::clicked, this, &MainWindow::runStitch);
     connect(renderButton, &QPushButton::clicked, this, &MainWindow::renderVideo);
     connect(exportButton_, &QPushButton::clicked, this, &MainWindow::renderVideo);
+    connect(viewer_, &ViewerWidget::snapshotRequested, this, &MainWindow::saveSnapshot);
     connect(autoButton, &QPushButton::clicked, this, &MainWindow::autoStitchAll);
     connect(fullscreenButton, &QPushButton::clicked, this, &MainWindow::openFullscreen);
     connect(savePano, &QPushButton::clicked, this, &MainWindow::savePanorama);
@@ -324,11 +325,44 @@ void MainWindow::setStatus(const QString& text) {
     logMessage(text);
 }
 
+QStringList MainWindow::chooseFilesExternal(bool folder) const {
+    const QString command = appSettings_.externalCommand;
+    QStringList args;
+    if (command.contains("zenity")) {
+        args << (folder ? "--selection" : "--file-selection");
+        args << "--filename=" + lastDir() + "/";
+        if (!folder) args << "--multiple";
+    } else {
+        // kdialog, or any unknown value: use the KDE dialog, not the app.
+        args << (folder ? "--getexistingdirectory" : "--getopenfilename")
+             << lastDir();
+        if (!folder)
+            args << "--multiple"
+                 << "*.dng *.jpg *.jpeg *.png *.insv *.mp4 *.mov *.mkv";
+    }
+    QProcess process;
+    process.start(command, args);
+    if (!process.waitForFinished(-1)) return {};
+    const QString output = QString::fromLocal8Bit(process.readAllStandardOutput()).trimmed();
+    if (output.isEmpty()) return {};
+    QStringList paths;
+    for (const auto& line : output.split('\n', Qt::SkipEmptyParts)) {
+        QString path = line.trimmed();
+        if (path.size() >= 2 && path.startsWith('"') && path.endsWith('"'))
+            path = path.mid(1, path.size() - 2);
+        if (!path.isEmpty()) paths.append(path);
+    }
+    return paths;
+}
+
 void MainWindow::addFiles() {
     if (appSettings_.fileExplorer == "external") {
-        QProcess::startDetached(appSettings_.externalCommand, {lastDir()});
-        setStatus("Opened " + appSettings_.externalCommand +
-                  ". Drag files into this window, or use Paste files from clipboard.");
+        const QStringList files = chooseFilesExternal(false);
+        if (files.isEmpty()) {
+            setStatus("No file selected in the KDE dialog");
+            return;
+        }
+        addPaths(files);
         return;
     }
     const QStringList files = QFileDialog::getOpenFileNames(
@@ -381,9 +415,20 @@ void MainWindow::dropEvent(QDropEvent* event) {
 
 void MainWindow::addFolder() {
     if (appSettings_.fileExplorer == "external") {
-        QProcess::startDetached(appSettings_.externalCommand, {lastDir()});
-        setStatus("Opened " + appSettings_.externalCommand +
-                  ". Drag a folder into this window to add it.");
+        const QStringList folders = chooseFilesExternal(true);
+        if (folders.isEmpty()) {
+            setStatus("No folder selected in the KDE dialog");
+            return;
+        }
+        QStringList allFiles;
+        for (const auto& folder : folders) {
+            const QStringList names = QDir(folder).entryList(
+                {"*.dng", "*.jpg", "*.jpeg", "*.png", "*.insv",
+                 "*.mp4", "*.mov", "*.mkv"}, QDir::Files);
+            for (const auto& name : names)
+                allFiles.append(QDir(folder).filePath(name));
+        }
+        addPaths(allFiles);
         return;
     }
     const QString dir = QFileDialog::getExistingDirectory(
@@ -423,7 +468,9 @@ void MainWindow::openGeneralSettings() {
         appSettings_ = dialog.settings();
         saveAppSettings(appSettings_);
         io::setRawOptions({appSettings_.exposureEV, appSettings_.autoBright});
-        setStatus("Settings saved. File explorer: " +
+        io::Mp4Writer::setPreferHardwareEncoder(appSettings_.preferGpu);
+        setStatus("Settings saved. Restart the app for display backend changes. "
+                  "File explorer: " +
                   (appSettings_.fileExplorer == "external"
                        ? appSettings_.externalCommand
                        : "Qt file dialog"));
@@ -686,6 +733,23 @@ void MainWindow::quickExport() {
     std::filesystem::remove(temp.toStdString());
     if (ok) setStatus("Exported " + path);
     else QMessageBox::critical(this, "Export failed", QString::fromStdString(error));
+}
+
+void MainWindow::saveSnapshot() {
+    if (panorama_.empty()) {
+        QMessageBox::warning(this, "Nothing to capture", "Stitch first.");
+        return;
+    }
+    const QPixmap view = viewer_->currentView();
+    if (view.isNull()) {
+        QMessageBox::warning(this, "Snapshot failed", "Could not read the OpenGL view.");
+        return;
+    }
+    const QString path = QFileDialog::getSaveFileName(
+        this, "Save current view", lastDir(), "PNG (*.png);;JPEG (*.jpg)");
+    if (path.isEmpty()) return;
+    if (view.save(path)) setStatus("Saved view " + path);
+    else QMessageBox::critical(this, "Snapshot failed", "Could not write the file.");
 }
 
 void MainWindow::savePanorama() {

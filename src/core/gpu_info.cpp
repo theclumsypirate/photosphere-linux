@@ -3,6 +3,7 @@
 #include <opencv2/core.hpp>
 #include <opencv2/core/cuda.hpp>
 
+#include <cstdlib>
 #include <filesystem>
 #include <fstream>
 #include <string>
@@ -37,6 +38,7 @@ bool directoryHasFile(const fs::path& dir, const std::string& suffix) {
 
 GpuInfo detectGpu() {
     GpuInfo info;
+    if (std::getenv("PS_DISABLE_GPU")) return info;
     std::error_code drmError;
     for (const auto& entry : fs::directory_iterator("/sys/class/drm", drmError)) {
         const std::string name = entry.path().filename().string();

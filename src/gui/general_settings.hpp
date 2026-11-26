@@ -12,9 +12,12 @@ namespace ps::gui {
 
 struct AppSettings {
     QString fileExplorer = "qt"; // "qt" or "external"
-    QString externalCommand = "dolphin";
+    QString externalCommand = "kdialog";
     double exposureEV = 0.0;
     bool autoBright = true;
+    bool forceX11 = false;
+    bool softwareRendering = false;
+    bool preferGpu = true;
 };
 
 AppSettings loadAppSettings();
@@ -33,6 +36,9 @@ private:
     QLineEdit* commandEdit_ = nullptr;
     QDoubleSpinBox* exposureSpin_ = nullptr;
     QCheckBox* autoBrightCheck_ = nullptr;
+    QCheckBox* forceX11Check_ = nullptr;
+    QCheckBox* softwareCheck_ = nullptr;
+    QCheckBox* gpuCheck_ = nullptr;
 };
 
 } // namespace ps::gui

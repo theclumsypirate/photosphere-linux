@@ -43,6 +43,7 @@ private slots:
     void updateExportButton();
     void openGeneralSettings();
     void pasteFromClipboard();
+    void saveSnapshot();
     void savePanorama();
     void saveLittlePlanet();
     void saveTagged();
@@ -56,6 +57,7 @@ private:
     std::vector<std::string> inputPaths() const;
     void setStatus(const QString& text);
     void logMessage(const QString& text);
+    QStringList chooseFilesExternal(bool folder) const;
 
     QListWidget* fileList_ = nullptr;
     QSpinBox* widthSpin_ = nullptr;

@@ -7,6 +7,8 @@
 #include <QOpenGLWidget>
 #include <QPoint>
 #include <QMatrix4x4>
+#include <QPixmap>
+#include <QPushButton>
 
 #include <opencv2/core.hpp>
 
@@ -25,6 +27,12 @@ public:
 
     void setPanorama(const cv::Mat& bgr);
 
+    // Captures exactly what is currently on screen, including the rotation.
+    QPixmap currentView();
+
+signals:
+    void snapshotRequested();
+
 public slots:
     void resetView();
 
@@ -35,6 +43,7 @@ protected:
     void mousePressEvent(QMouseEvent* event) override;
     void mouseMoveEvent(QMouseEvent* event) override;
     void wheelEvent(QWheelEvent* event) override;
+    void resizeEvent(QResizeEvent* event) override;
 
 private:
     void buildSphere();
@@ -55,6 +64,7 @@ private:
     float fov_ = 75.0f;
     bool dragging_ = false;
     bool hasTexture_ = false;
+    QPushButton* snapshotButton_ = nullptr;
 };
 
 } // namespace ps::gui
