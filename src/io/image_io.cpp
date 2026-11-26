@@ -4,6 +4,7 @@
 #include <opencv2/imgproc.hpp>
 
 #include <algorithm>
+#include <cmath>
 #include <cstdint>
 #include <cstring>
 #include <fstream>
@@ -18,6 +19,8 @@
 
 namespace ps::io {
 namespace {
+
+RawOptions g_rawOptions;
 
 bool isDngName(const std::string& path) {
     auto pos = path.find_last_of('.');
@@ -194,6 +197,10 @@ bool readRawTiff(const std::string& path, RawInfo& info, std::string& error) {
 
 } // namespace
 
+void setRawOptions(const RawOptions& options) { g_rawOptions = options; }
+
+RawOptions rawOptions() { return g_rawOptions; }
+
 bool parseInsta360Calibration(const std::string& comment, CameraModel& model) {
     const size_t p = comment.find("INSTA360");
     if (p == std::string::npos) return false;
@@ -241,7 +248,9 @@ bool readStill(const std::string& path, std::vector<cv::Mat>& out,
         p.output_bps = 8;
         p.output_color = 1; // sRGB
         p.use_camera_wb = 1;
-        p.no_auto_bright = 0;
+        p.no_auto_bright = g_rawOptions.autoBright ? 0 : 1;
+        // LibRaw calls the EV multiplier "bright" (1.0 means unchanged).
+        p.bright = static_cast<float>(std::pow(2.0, g_rawOptions.exposureEV));
         rc = raw.dcraw_process();
         if (rc != LIBRAW_SUCCESS) { error = LibRaw::strerror(rc); return false; }
         libraw_processed_image_t* img = raw.dcraw_make_mem_image(&rc);
@@ -333,7 +342,10 @@ bool readStill(const std::string& path, std::vector<cv::Mat>& out,
         }
         // Auto exposure for the underexposed test frames, then sRGB gamma.
         const double mean = cv::mean(rgb)[0];
-        const double exposure = std::clamp(0.45 / std::max(1e-4, mean), 0.5, 12.0);
+        const double autoGain = g_rawOptions.autoBright
+                                    ? std::clamp(0.45 / std::max(1e-4, mean), 0.5, 12.0)
+                                    : 1.0;
+        const double exposure = autoGain * std::pow(2.0, g_rawOptions.exposureEV);
         rgb *= exposure;
         cv::pow(rgb, 1.0 / 2.2, rgb);
         cv::Mat bgr8;

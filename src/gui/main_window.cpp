@@ -10,6 +10,7 @@
 #include "core/stitcher.hpp"
 #include "io/exif_pose.hpp"
 #include "io/frame_store.hpp"
+#include "io/image_io.hpp"
 #include "io/insv_reader.hpp"
 #include "io/video_writer.hpp"
 
@@ -132,6 +133,7 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent) {
     resize(1780, 1020);
     setMinimumSize(1500, 900);
     appSettings_ = loadAppSettings();
+    io::setRawOptions({appSettings_.exposureEV, appSettings_.autoBright});
 
     auto* central = new QWidget(this);
     auto* mainLayout = new QVBoxLayout(central);
@@ -420,6 +422,7 @@ void MainWindow::openGeneralSettings() {
     if (dialog.exec() == QDialog::Accepted) {
         appSettings_ = dialog.settings();
         saveAppSettings(appSettings_);
+        io::setRawOptions({appSettings_.exposureEV, appSettings_.autoBright});
         setStatus("Settings saved. File explorer: " +
                   (appSettings_.fileExplorer == "external"
                        ? appSettings_.externalCommand

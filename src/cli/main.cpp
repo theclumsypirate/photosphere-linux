@@ -25,6 +25,7 @@ void usage() {
     std::cout << "photosphere-cli - offline 360 photo tools\n\n"
               << "Commands:\n"
               << "  gpu       show detected GPU and preferred decode backend\n"
+              << "RAW options for stitch/auto/inspect: --ev EV, --no-auto-bright\n"
               << "Global options for stitch/auto/batch/video: --refine, --seams,\n"
               << "  --no-multiband,\n"
               << "  --flip, --no-flip\n"
@@ -87,17 +88,25 @@ double numberOption(int argc, char** argv, const std::string& name, double fallb
     try { return std::stod(v); } catch (...) { return fallback; }
 }
 
+void applyRawOptions(int argc, char** argv) {
+    ps::io::setRawOptions({numberOption(argc, argv, "--ev", 0.0),
+                           !hasFlag(argc, argv, "--no-auto-bright")});
+}
+
 bool cmdStitch(int argc, char** argv) {
+    applyRawOptions(argc, argv);
     const std::string outPath = optionValue(argc, argv, "-o");
     if (outPath.empty()) { std::cerr << "stitch: missing -o\n"; return false; }
     const std::string inputs = [&]() {
         std::vector<std::string> files;
         for (int i = 1; i < argc; ++i) {
             const std::string a = argv[i];
-            if (a == "-o" || a == "-w" || a == "--fov" || a == "--max-frames") { ++i; continue; }
+            if (a == "-o" || a == "-w" || a == "--fov" || a == "--max-frames" ||
+                a == "--ev") { ++i; continue; }
             if (a == "--no-multiband" || a == "--no-flip" || a == "--flip" ||
                 a == "--refine" || a == "--seams" || a == "--no-seams" ||
-                a == "--keep-all" || a == "--no-local-warp" || a == "stitch") continue;
+                a == "--keep-all" || a == "--no-local-warp" ||
+                a == "--no-auto-bright" || a == "stitch") continue;
             files.push_back(a);
         }
         std::string s;
@@ -256,14 +265,16 @@ bool cmdVideo(int argc, char** argv) {
 }
 
 bool cmdAuto(int argc, char** argv) {
+    applyRawOptions(argc, argv);
     const std::string dir = optionValue(argc, argv, "-o");
     std::vector<std::string> files;
     for (int i = 2; i < argc; ++i) {
         const std::string a = argv[i];
-        if (a == "-o" || a == "-w" || a == "--fov" || a == "--max-frames") { ++i; continue; }
+        if (a == "-o" || a == "-w" || a == "--fov" || a == "--max-frames" ||
+            a == "--ev") { ++i; continue; }
         if (a == "--refine" || a == "--seams" || a == "--no-seams" ||
             a == "--keep-all" || a == "--no-local-warp" || a == "--no-multiband" ||
-            a == "--flip" || a == "--no-flip") continue;
+            a == "--no-auto-bright" || a == "--flip" || a == "--no-flip") continue;
         files.push_back(a);
     }
     if (dir.empty() || files.empty()) {
@@ -301,6 +312,7 @@ bool cmdAuto(int argc, char** argv) {
 }
 
 bool cmdInspect(int argc, char** argv) {
+    applyRawOptions(argc, argv);
     for (const auto& path : positional(argc, argv, 2)) {
         if (ps::io::isInsvFile(path)) {
             std::vector<ps::LensFrame> frames;

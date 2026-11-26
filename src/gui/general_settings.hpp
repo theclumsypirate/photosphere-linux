@@ -3,7 +3,9 @@
 #include <QDialog>
 #include <QString>
 
+class QCheckBox;
 class QComboBox;
+class QDoubleSpinBox;
 class QLineEdit;
 
 namespace ps::gui {
@@ -11,6 +13,8 @@ namespace ps::gui {
 struct AppSettings {
     QString fileExplorer = "qt"; // "qt" or "external"
     QString externalCommand = "dolphin";
+    double exposureEV = 0.0;
+    bool autoBright = true;
 };
 
 AppSettings loadAppSettings();
@@ -27,6 +31,8 @@ public:
 private:
     QComboBox* explorerCombo_ = nullptr;
     QLineEdit* commandEdit_ = nullptr;
+    QDoubleSpinBox* exposureSpin_ = nullptr;
+    QCheckBox* autoBrightCheck_ = nullptr;
 };
 
 } // namespace ps::gui

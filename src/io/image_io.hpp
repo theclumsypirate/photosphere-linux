@@ -9,6 +9,14 @@
 
 namespace ps::io {
 
+struct RawOptions {
+    double exposureEV = 0.0; // added on top of the raw development
+    bool autoBright = true;  // current default, keeps existing output
+};
+
+void setRawOptions(const RawOptions& options);
+RawOptions rawOptions();
+
 // Reads a still image. DNG files yield two lens images (the raw file holds two
 // stacked fisheye crops). Side by side JPG files also yield two lens images.
 // Plain JPEG/PNG files yield one.
