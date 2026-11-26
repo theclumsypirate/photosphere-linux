@@ -7,13 +7,16 @@
 #include <QListWidget>
 #include <QMainWindow>
 #include <QPlainTextEdit>
+#include <QProgressDialog>
+#include <QThread>
 #include <QPushButton>
 #include <QSpinBox>
 
 #include <opencv2/core.hpp>
 
-#include <vector>
+#include <atomic>
 #include <string>
+#include <vector>
 
 #include "gui/viewer_widget.hpp"
 
@@ -36,6 +39,7 @@ private slots:
     void autoStitchAll();
     void renderVideo();
     void quickExport();
+    void updateExportButton();
     void savePanorama();
     void saveLittlePlanet();
     void saveTagged();
@@ -63,8 +67,12 @@ private:
     QComboBox* flipCombo_ = nullptr;
     QLabel* statusLabel_ = nullptr;
     QPlainTextEdit* logEdit_ = nullptr;
+    QPushButton* exportButton_ = nullptr;
     ViewerWidget* viewer_ = nullptr;
     cv::Mat panorama_;
+    QThread* exportThread_ = nullptr;
+    QProgressDialog* exportProgress_ = nullptr;
+    std::atomic<bool> exportCancel_{false};
 };
 
 } // namespace ps::gui

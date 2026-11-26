@@ -3,6 +3,7 @@ out/
 photosphere-gui
 ps_tests
 photosphere-cli
+*.AppImage
 AGENTS.md
 
 # Generated build files (build directories themselves are kept)

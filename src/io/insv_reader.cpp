@@ -133,14 +133,30 @@ void releaseDecoder(DecoderState& state) {
 } // namespace
 #endif
 
-bool isInsvFile(const std::string& path) {
+bool isVideoFile(const std::string& path) {
+    std::string lower = path;
+    std::transform(lower.begin(), lower.end(), lower.begin(),
+                   [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
+    for (const std::string& extension :
+         {".insv", ".mp4", ".mov", ".m4v", ".mkv", ".webm", ".avi"}) {
+        if (lower.size() >= extension.size() &&
+            lower.compare(lower.size() - extension.size(), extension.size(), extension) == 0)
+            return true;
+    }
     std::ifstream in(path, std::ios::binary);
     if (!in) return false;
     char header[12] = {};
     in.read(header, sizeof(header));
-    // ftyp at offset 4, brand 'avc1' or 'isom' at offset 8.
-    return header[4] == 'f' && header[5] == 't' && header[6] == 'y' && header[7] == 'p';
+    if (header[4] == 'f' && header[5] == 't' && header[6] == 'y' && header[7] == 'p')
+        return true;
+    // Matroska and WebM start with the EBML magic.
+    return static_cast<unsigned char>(header[0]) == 0x1A &&
+           static_cast<unsigned char>(header[1]) == 0x45 &&
+           static_cast<unsigned char>(header[2]) == 0xDF &&
+           static_cast<unsigned char>(header[3]) == 0xA3;
 }
+
+bool isInsvFile(const std::string& path) { return isVideoFile(path); }
 
 double insvFrameRate(const std::string& path) {
 #ifndef PS_HAVE_FFMPEG
@@ -175,8 +191,22 @@ double insvDuration(const std::string& path) {
     AVFormatContext* ctx = nullptr;
     if (avformat_open_input(&ctx, path.c_str(), nullptr, nullptr) < 0) return 0.0;
     double duration = 0.0;
-    if (avformat_find_stream_info(ctx, nullptr) >= 0 && ctx->duration != AV_NOPTS_VALUE)
-        duration = static_cast<double>(ctx->duration) / AV_TIME_BASE;
+    if (avformat_find_stream_info(ctx, nullptr) >= 0) {
+        if (ctx->duration != AV_NOPTS_VALUE)
+            duration = static_cast<double>(ctx->duration) / AV_TIME_BASE;
+        if (duration <= 0.0)
+            for (unsigned i = 0; i < ctx->nb_streams; ++i) {
+                AVStream* stream = ctx->streams[i];
+                if (stream->codecpar->codec_type != AVMEDIA_TYPE_VIDEO) continue;
+                if (stream->duration != AV_NOPTS_VALUE)
+                    duration = static_cast<double>(stream->duration) *
+                               av_q2d(stream->time_base);
+                else if (stream->avg_frame_rate.num > 0 && stream->nb_frames > 0)
+                    duration = static_cast<double>(stream->nb_frames) /
+                               av_q2d(stream->avg_frame_rate);
+                if (duration > 0.0) break;
+            }
+    }
     avformat_close_input(&ctx);
     return duration;
 #endif
@@ -204,11 +234,13 @@ bool readInsvAtTimes(const std::string& path, const std::vector<double>& times,
     for (unsigned i = 0; i < ctx->nb_streams; ++i)
         if (ctx->streams[i]->codecpar->codec_type == AVMEDIA_TYPE_VIDEO)
             streams.push_back(static_cast<int>(i));
-    if (streams.size() < 2) {
-        error = "expected two fisheye video tracks";
+    if (streams.empty()) {
+        error = "no video track in container";
         avformat_close_input(&ctx);
         return false;
     }
+    // One track means a side by side or stacked dual fisheye image. The loop
+    // below splits each decoded frame into two lens images in that case.
     const DecodeBackend backend = detectGpu().preferredDecodeBackend();
     std::vector<DecoderState> decoders(streams.size());
     for (size_t k = 0; k < streams.size(); ++k) {

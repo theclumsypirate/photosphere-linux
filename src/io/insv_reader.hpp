@@ -7,8 +7,10 @@
 
 namespace ps::io {
 
-// True when the file has the Insta360 INSV magic. Such files are ordinary MP4
-// containers with a proprietary telemetry box appended.
+// True for a video container that libav can demux: MP4/INSV/MOV/MKV/WebM.
+bool isVideoFile(const std::string& path);
+
+// Kept for compatibility. Same result as isVideoFile.
 bool isInsvFile(const std::string& path);
 
 // Decodes both fisheye video tracks. Frames are paired by decode order, which

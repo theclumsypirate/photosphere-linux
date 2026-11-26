@@ -2,6 +2,8 @@
 
 #include "core/gpano.hpp"
 #include "core/gpu_info.hpp"
+#include "gui/export_dialog.hpp"
+#include "gui/video_export_worker.hpp"
 #include "core/little_planet.hpp"
 #include "core/stitcher.hpp"
 #include "io/exif_pose.hpp"
@@ -22,6 +24,7 @@
 #include <QMimeData>
 #include <QHBoxLayout>
 #include <QIcon>
+#include <QFont>
 #include <QKeySequence>
 #include <QLabel>
 #include <QListWidgetItem>
@@ -29,6 +32,7 @@
 #include <QPlainTextEdit>
 #include <QPointer>
 #include <QPushButton>
+#include <QScrollArea>
 #include <QShortcut>
 #include <QSplitter>
 #include <QStringList>
@@ -52,6 +56,7 @@ void messageHandler(QtMsgType type, const QMessageLogContext&, const QString& me
     if (message.contains("No node found for item that was just removed")) return;
     if (message.contains("setDesktopFileName: the specified desktop file name ends"))
         return;
+    if (message.contains("Failed to register with host portal")) return;
     const char* prefix = "LOG";
     if (type == QtWarningMsg) prefix = "WARN";
     else if (type == QtCriticalMsg || type == QtFatalMsg) prefix = "ERROR";
@@ -120,7 +125,8 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent) {
     setWindowTitle("PhotoSphere Linux");
     setWindowIcon(QIcon(":/icons/icon.png"));
     setAcceptDrops(true);
-    resize(1700, 1000);
+    resize(1780, 1020);
+    setMinimumSize(1500, 900);
 
     auto* central = new QWidget(this);
     auto* mainLayout = new QVBoxLayout(central);
@@ -129,20 +135,21 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent) {
     auto* root = new QSplitter(Qt::Horizontal, central);
 
     // Left: inputs, stitch options and actions.
-    auto* controls = new QWidget(root);
-    controls->setMinimumWidth(430);
+    auto* scroll = new QScrollArea(root);
+    scroll->setWidgetResizable(true);
+    scroll->setMinimumWidth(520);
+    auto* controls = new QWidget(scroll);
+    controls->setMinimumWidth(500);
+    QFont controlFont = controls->font();
+    controlFont.setPointSize(11);
+    controls->setFont(controlFont);
     auto* left = new QVBoxLayout(controls);
-    left->setContentsMargins(0, 0, 0, 0);
-    auto* exportButton = new QPushButton("EXPORT", controls);
-    exportButton->setMinimumHeight(56);
-    exportButton->setStyleSheet(
-        "QPushButton { font-size: 22px; font-weight: bold; color: white; "
-        "background-color: #E85D24; border-radius: 10px; } "
-        "QPushButton:hover { background-color: #FF7A3D; }");
-    left->addWidget(exportButton);
+    left->setContentsMargins(4, 4, 4, 4);
+    left->setSpacing(6);
     left->addWidget(new QLabel("Input files, folders or drag and drop", controls));
     fileList_ = new QListWidget(controls);
     fileList_->setSelectionMode(QAbstractItemView::ExtendedSelection);
+    fileList_->setMinimumHeight(220);
     left->addWidget(fileList_, 1);
 
     auto* addButton = new QPushButton("Add images or INSV video", controls);
@@ -232,25 +239,29 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent) {
     logEdit_ = new QPlainTextEdit(logPanel);
     logEdit_->setReadOnly(true);
     logEdit_->setMaximumBlockCount(5000);
-    logEdit_->setStyleSheet("font-family: monospace; font-size: 11px;");
+    logEdit_->setStyleSheet("font-family: monospace; font-size: 12px;");
     logLayout->addWidget(logEdit_, 1);
     auto* logButtons = new QHBoxLayout();
     auto* copyLogButton = new QPushButton("Copy log", logPanel);
     auto* clearLogButton = new QPushButton("Clear log", logPanel);
+    exportButton_ = new QPushButton("Export", logPanel);
+    exportButton_->setVisible(false);
     logButtons->addWidget(copyLogButton);
     logButtons->addWidget(clearLogButton);
     logButtons->addStretch(1);
+    logButtons->addWidget(exportButton_);
     logLayout->addLayout(logButtons);
     right->addWidget(logPanel);
     right->setStretchFactor(0, 4);
     right->setStretchFactor(1, 1);
     right->setSizes({760, 220});
 
-    root->addWidget(controls);
+    scroll->setWidget(controls);
+    root->addWidget(scroll);
     root->addWidget(right);
     root->setStretchFactor(0, 0);
     root->setStretchFactor(1, 1);
-    root->setSizes({430, 1270});
+    root->setSizes({540, 1240});
     mainLayout->addWidget(root, 1);
 
     statusLabel_ = new QLabel("Ready", central);
@@ -267,7 +278,7 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent) {
     connect(removeButton, &QPushButton::clicked, this, &MainWindow::removeSelected);
     connect(stitchButton, &QPushButton::clicked, this, &MainWindow::runStitch);
     connect(renderButton, &QPushButton::clicked, this, &MainWindow::renderVideo);
-    connect(exportButton, &QPushButton::clicked, this, &MainWindow::quickExport);
+    connect(exportButton_, &QPushButton::clicked, this, &MainWindow::renderVideo);
     connect(autoButton, &QPushButton::clicked, this, &MainWindow::autoStitchAll);
     connect(fullscreenButton, &QPushButton::clicked, this, &MainWindow::openFullscreen);
     connect(savePano, &QPushButton::clicked, this, &MainWindow::savePanorama);
@@ -328,6 +339,7 @@ void MainWindow::addPaths(const QStringList& paths) {
     }
     if (added > 0)
         logMessage("Added " + QString::number(added) + " file(s)");
+    updateExportButton();
 }
 
 void MainWindow::dragEnterEvent(QDragEnterEvent* event) {
@@ -373,10 +385,19 @@ void MainWindow::addFolder() {
     }
     logMessage("Added " + QString::number(added) + " files from " + dir +
                " in capture order");
+    updateExportButton();
 }
 
 void MainWindow::removeSelected() {
     for (QListWidgetItem* item : fileList_->selectedItems()) delete item;
+    updateExportButton();
+}
+
+void MainWindow::updateExportButton() {
+    bool hasVideo = false;
+    for (const auto& path : inputPaths())
+        if (io::isVideoFile(path)) hasVideo = true;
+    exportButton_->setVisible(hasVideo);
 }
 
 void MainWindow::runStitch() {
@@ -491,62 +512,81 @@ void MainWindow::autoStitchAll() {
 }
 
 void MainWindow::renderVideo() {
-    std::string videoPath;
-    for (const auto& path : inputPaths())
-        if (io::isInsvFile(path)) { videoPath = path; break; }
-    if (videoPath.empty()) {
-        QMessageBox::warning(this, "No video", "Add an INSV or MP4 file first.");
+    if (exportThread_) {
+        QMessageBox::information(this, "Export running", "An export is already running.");
         return;
     }
-    const QString output = QFileDialog::getSaveFileName(
-        this, "Export stitched video", lastDir(), "MP4 (*.mp4)");
-    if (output.isEmpty()) return;
+    std::string videoPath;
+    for (const auto& path : inputPaths())
+        if (io::isVideoFile(path)) { videoPath = path; break; }
+    if (videoPath.empty()) {
+        QMessageBox::warning(this, "No video", "Add a video file first.");
+        return;
+    }
+    const double duration = io::insvDuration(videoPath);
+    const double sourceFps = io::insvFrameRate(videoPath);
+    const QString defaultOutput = lastDir() + "/photosphere-export.mp4";
+    ExportDialog dialog(duration, sourceFps, defaultOutput, this);
+    if (dialog.exec() != QDialog::Accepted) return;
+    const ExportDialogOptions dialogOptions = dialog.options();
+    if (dialogOptions.output.isEmpty()) return;
 
-    int width = widthSpin_->value();
-    if (width & 1) --width;
-    StitchOptions options;
-    options.width = width;
-    options.fisheyeFovDegrees = fovSpin_->value();
-    options.multiband = multibandCheck_->isChecked();
+    VideoExportWorker::Options options;
+    options.input = videoPath;
+    options.output = dialogOptions.output.toStdString();
+    options.width = dialogOptions.width;
+    options.fps = dialogOptions.fps;
+    options.everySeconds = dialogOptions.everySeconds;
+    options.startTime = dialogOptions.startTime;
+    options.endTime = dialogOptions.endTime;
     options.flipLenses = autoFlipFor(videoPath);
     if (flipCombo_->currentIndex() == 1) options.flipLenses = true;
     if (flipCombo_->currentIndex() == 2) options.flipLenses = false;
+    options.multiband = multibandCheck_->isChecked();
 
-    setStatus("Decoding video frames...");
-    QApplication::setOverrideCursor(Qt::WaitCursor);
-    std::vector<LensFrame> frames;
-    std::string error;
-    const bool decoded = io::readInsv(videoPath, frames, 0,
-                                      videoStepSpin_->value(), error);
-    if (decoded) {
-        for (auto& frame : frames)
-            if (frame.image.cols > 2048)
-                cv::resize(frame.image, frame.image, cv::Size(2048, 2048),
-                           0.0, 0.0, cv::INTER_AREA);
-        io::Mp4Writer writer(output.toStdString(), width, width / 2,
-                             outputFpsSpin_->value());
-        if (!writer.open(error)) {
-            QMessageBox::critical(this, "Export failed", QString::fromStdString(error));
-        } else {
-            int written = 0;
-            for (size_t i = 0; i + 1 < frames.size(); i += 2) {
-                if (frames[i].lens == frames[i + 1].lens) continue;
-                std::string diagnostics;
-                const Panorama pano = stitchDualFisheye(
-                    {frames[i], frames[i + 1]}, options, diagnostics);
-                if (pano.equirect.empty()) continue;
-                if (!writer.write(pano.equirect, error)) break;
-                ++written;
-                if ((written % 5) == 0)
-                    logMessage(QString::number(written) + " panorama frames encoded");
-            }
-            writer.finish();
-            setStatus("Exported " + QString::number(written) + " panorama frames to " + output);
+    exportCancel_ = false;
+    exportThread_ = new QThread(this);
+    auto* worker = new VideoExportWorker();
+    worker->moveToThread(exportThread_);
+    worker->setOptions(options);
+    worker->setCancelFlag(&exportCancel_);
+
+    exportProgress_ = new QProgressDialog("Preparing export...", "Cancel", 0, 100, this);
+    exportProgress_->setWindowModality(Qt::WindowModal);
+    exportProgress_->setMinimumDuration(0);
+    exportProgress_->setValue(0);
+
+    connect(exportThread_, &QThread::started, worker, &VideoExportWorker::run);
+    connect(worker, &VideoExportWorker::progress, this, [this](int done, int total,
+                                                                const QString& message) {
+        if (!exportProgress_) return;
+        exportProgress_->setMaximum(std::max(1, total));
+        exportProgress_->setValue(done);
+        exportProgress_->setLabelText(message);
+    });
+    connect(exportProgress_, &QProgressDialog::canceled, this, [this]() {
+        exportCancel_ = true;
+        setStatus("Export cancellation requested");
+    });
+    connect(worker, &VideoExportWorker::finished, this,
+            [this, worker](bool ok, const QString& message) {
+                setStatus(message);
+                logMessage(message);
+                if (!ok && message != "Export cancelled")
+                    QMessageBox::warning(this, "Export", message);
+                exportThread_->quit();
+            });
+    connect(exportThread_, &QThread::finished, worker, &QObject::deleteLater);
+    connect(exportThread_, &QThread::finished, this, [this]() {
+        exportThread_->deleteLater();
+        exportThread_ = nullptr;
+        if (exportProgress_) {
+            exportProgress_->close();
+            exportProgress_->deleteLater();
+            exportProgress_ = nullptr;
         }
-    }
-    QApplication::restoreOverrideCursor();
-    if (!decoded || !error.empty())
-        logMessage(QString::fromStdString("Warning: " + error));
+    });
+    exportThread_->start();
 }
 
 void MainWindow::openFullscreen() {
