@@ -43,16 +43,16 @@ void main() {
 } // namespace
 
 ViewerWidget::ViewerWidget(QWidget* parent) : QOpenGLWidget(parent) {
-    snapshotButton_ = new QPushButton(this);
+    snapshotButton_ = new QPushButton("Save view", this);
     snapshotButton_->setIcon(QIcon(":/icons/snapshot.png"));
-    snapshotButton_->setIconSize(QSize(34, 34));
+    snapshotButton_->setIconSize(QSize(24, 24));
     snapshotButton_->setToolTip("Save the current 360 view as an image");
-    snapshotButton_->setFlat(true);
-    snapshotButton_->setFixedSize(48, 48);
+    snapshotButton_->setFixedSize(120, 40);
     snapshotButton_->setStyleSheet(
-        "QPushButton { background: rgba(20,22,30,180); border-radius: 24px; } "
-        "QPushButton:hover { background: rgba(60,64,80,220); }");
-    snapshotButton_->move(width() - 60, height() - 60);
+        "QPushButton { background: rgba(30,32,42,220); color: white; "
+        "border: 1px solid #555; border-radius: 6px; } "
+        "QPushButton:hover { background: rgba(70,74,92,240); }");
+    snapshotButton_->move(width() - 132, height() - 52);
     snapshotButton_->raise();
     snapshotButton_->show();
     connect(snapshotButton_, &QPushButton::clicked,
@@ -199,7 +199,7 @@ void ViewerWidget::mouseMoveEvent(QMouseEvent* event) {
 void ViewerWidget::resizeEvent(QResizeEvent* event) {
     QOpenGLWidget::resizeEvent(event);
     if (snapshotButton_)
-        snapshotButton_->move(width() - 60, height() - 60);
+        snapshotButton_->move(width() - 132, height() - 52);
 }
 
 QPixmap ViewerWidget::currentView() {

@@ -154,8 +154,7 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent) {
     left->setContentsMargins(4, 4, 4, 4);
     left->setSpacing(6);
     auto* settingsButton = new QPushButton(controls);
-    settingsButton->setIcon(QIcon::fromTheme(
-        "preferences-system", QIcon(":/icons/settings.png")));
+    settingsButton->setIcon(QIcon(":/icons/settings.png"));
     settingsButton->setToolTip("General settings");
     settingsButton->setMinimumWidth(44);
     left->addWidget(settingsButton, 0, Qt::AlignRight);
