@@ -75,13 +75,18 @@ bool Mp4Writer::open(std::string& error) {
         return false;
     }
     impl_->stream->time_base = ctx->time_base;
+    impl_->stream->avg_frame_rate = ctx->framerate;
     if (!(impl_->format->oformat->flags & AVFMT_NOFILE)) {
         if (avio_open(&impl_->format->pb, impl_->path.c_str(), AVIO_FLAG_WRITE) < 0) {
             error = "cannot open output file";
             return false;
         }
     }
-    if (avformat_write_header(impl_->format, nullptr) < 0) {
+    AVDictionary* options = nullptr;
+    av_dict_set(&options, "movflags", "+faststart", 0);
+    const int headerResult = avformat_write_header(impl_->format, &options);
+    av_dict_free(&options);
+    if (headerResult < 0) {
         error = "cannot write MP4 header";
         return false;
     }
@@ -118,6 +123,8 @@ bool Mp4Writer::write(const cv::Mat& bgr, std::string& error) {
     while ((rc = avcodec_receive_packet(impl_->encoder, impl_->packet)) == 0) {
         av_packet_rescale_ts(impl_->packet, impl_->encoder->time_base,
                              impl_->stream->time_base);
+        impl_->packet->duration = av_rescale_q(1, impl_->encoder->time_base,
+                                               impl_->stream->time_base);
         impl_->packet->stream_index = impl_->stream->index;
         av_interleaved_write_frame(impl_->format, impl_->packet);
         av_packet_unref(impl_->packet);
@@ -133,6 +140,8 @@ void Mp4Writer::finish() {
     while ((rc = avcodec_receive_packet(impl_->encoder, impl_->packet)) == 0) {
         av_packet_rescale_ts(impl_->packet, impl_->encoder->time_base,
                              impl_->stream->time_base);
+        impl_->packet->duration = av_rescale_q(1, impl_->encoder->time_base,
+                                               impl_->stream->time_base);
         impl_->packet->stream_index = impl_->stream->index;
         av_interleaved_write_frame(impl_->format, impl_->packet);
         av_packet_unref(impl_->packet);

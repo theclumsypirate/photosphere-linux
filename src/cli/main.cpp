@@ -206,7 +206,7 @@ bool cmdVideo(int argc, char** argv) {
         std::cerr << "video: need -i VIDEO.insv -o OUT.mp4\n";
         return false;
     }
-    const double everySeconds = numberOption(argc, argv, "--every", 1.0);
+    const double everySeconds = numberOption(argc, argv, "--every", 0.2);
     const double fps = numberOption(argc, argv, "--fps", 25.0);
     const double duration = ps::io::insvDuration(input);
     std::vector<double> times;
