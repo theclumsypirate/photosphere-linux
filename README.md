@@ -8,15 +8,16 @@ This is a simple app with a GUI for automatic stitching images or videos.
  - This app works best with dual-fisheye footage.
     
 
+### Qt GUI
+<p align="center">
+  <img src="docs/linux_GUI_app_1.png" width="70%" alt="GUI">
+</p>
+
 ### Dual fisheye input
 <p align="center">
   <img src="docs/exemple_photo.jpg" width="70%" alt="Dual fisheye input">
 </p>
 
-### Qt GUI
-<p align="center">
-  <img src="docs/linux_GUI_app.png" width="70%" alt="GUI">
-</p>
 
 ### Stitched panorama
 <p align="center">
