@@ -61,6 +61,9 @@ PoseRefineResult refinePoses(const std::vector<PoseFrame>& frames,
                         : 1.0;
         features[i] = extractFeatures(frames[i].image);
     }
+    result.inlierCounts.assign(n, 0);
+    result.samplePixels.resize(n);
+    result.sampleResiduals.resize(n);
     std::vector<Mat3> initial(n);
     for (size_t i = 0; i < n; ++i) initial[i] = basisToMatrix(basisFromPose(frames[i].pose));
 
@@ -74,17 +77,47 @@ PoseRefineResult refinePoses(const std::vector<PoseFrame>& frames,
             std::vector<std::vector<cv::DMatch>> knn;
             matcher->knnMatch(features[a].descriptors, features[b].descriptors, knn, 2);
             std::vector<Vec3> from, to;
+            std::vector<int> queryIndex, trainIndex;
             for (const auto& m : knn) {
                 if (m.size() < 2 || m[0].distance > 0.72f * m[1].distance) continue;
                 from.push_back(bearingFromPixel(features[a].keypoints[m[0].queryIdx],
                                                 frames[a].intrinsics, scales[a]));
                 to.push_back(bearingFromPixel(features[b].keypoints[m[0].trainIdx],
                                               frames[b].intrinsics, scales[b]));
+                queryIndex.push_back(m[0].queryIdx);
+                trainIndex.push_back(m[0].trainIdx);
             }
             if (from.size() < 8) continue;
             auto estimate = rotation::estimateRotation(from, to, thresholdRad,
                                                         maxIterations, rng);
             if (estimate.inliers.size() < 8) continue;
+            auto pixelOf = [](const Vec3& p, const FrameIntrinsics& in, double scale) {
+                if (p[2] <= 1e-6) return cv::Point2f(-1.f, -1.f);
+                return cv::Point2f(
+                    static_cast<float>(in.centerXPx() * scale +
+                                       in.focalXPx * scale * p[0] / p[2]),
+                    static_cast<float>(in.centerYPx() * scale +
+                                       in.focalYPx * scale * p[1] / p[2]));
+            };
+            for (int index : estimate.inliers) {
+                const Vec3 predicted = rotation::apply(estimate.rotation, from[index]);
+                const cv::Point2f predictedPixel =
+                    pixelOf(predicted, frames[b].intrinsics, scales[b]);
+                const cv::Point2f actualPixel = features[b].keypoints[trainIndex[index]].pt;
+                if (predictedPixel.x >= 0 && actualPixel.x >= 0) {
+                    result.samplePixels[b].push_back(actualPixel);
+                    result.sampleResiduals[b].push_back(predictedPixel - actualPixel);
+                }
+                const Vec3 inverse = rotation::apply(
+                    rotation::transpose(estimate.rotation), to[index]);
+                const cv::Point2f inversePixel =
+                    pixelOf(inverse, frames[a].intrinsics, scales[a]);
+                const cv::Point2f actualA = features[a].keypoints[queryIndex[index]].pt;
+                if (inversePixel.x >= 0 && actualA.x >= 0) {
+                    result.samplePixels[a].push_back(actualA);
+                    result.sampleResiduals[a].push_back(inversePixel - actualA);
+                }
+            }
             // The estimate maps bearings of a into b. Convert it into the
             // [right, -up, forward] exchange convention used by CameraBasis.
             rotation::RotationEdge edge;
@@ -94,7 +127,10 @@ PoseRefineResult refinePoses(const std::vector<PoseFrame>& frames,
             edge.weight = 1.0 / (1.0 + estimate.residualRadians * 10.0);
             edges.push_back(edge);
             ++result.edgeCount;
-            result.totalInliers += static_cast<int>(estimate.inliers.size());
+            const int count = static_cast<int>(estimate.inliers.size());
+            result.inlierCounts[a] += count;
+            result.inlierCounts[b] += count;
+            result.totalInliers += count;
         }
     }
     result.rotations = rotation::averageRotations(initial, edges, 24);

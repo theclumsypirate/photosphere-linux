@@ -15,7 +15,11 @@
 #include <QApplication>
 #include <QClipboard>
 #include <QDir>
+#include <QDragEnterEvent>
+#include <QDropEvent>
 #include <QFileDialog>
+#include <QFileInfo>
+#include <QMimeData>
 #include <QHBoxLayout>
 #include <QIcon>
 #include <QKeySequence>
@@ -45,6 +49,9 @@ QPointer<QPlainTextEdit> g_logEdit;
 
 void messageHandler(QtMsgType type, const QMessageLogContext&, const QString& message) {
     if (!g_logEdit) return;
+    if (message.contains("No node found for item that was just removed")) return;
+    if (message.contains("setDesktopFileName: the specified desktop file name ends"))
+        return;
     const char* prefix = "LOG";
     if (type == QtWarningMsg) prefix = "WARN";
     else if (type == QtCriticalMsg || type == QtFatalMsg) prefix = "ERROR";
@@ -112,7 +119,8 @@ QString lastDir() {
 MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent) {
     setWindowTitle("PhotoSphere Linux");
     setWindowIcon(QIcon(":/icons/icon.png"));
-    resize(1400, 900);
+    setAcceptDrops(true);
+    resize(1700, 1000);
 
     auto* central = new QWidget(this);
     auto* mainLayout = new QVBoxLayout(central);
@@ -122,9 +130,17 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent) {
 
     // Left: inputs, stitch options and actions.
     auto* controls = new QWidget(root);
+    controls->setMinimumWidth(430);
     auto* left = new QVBoxLayout(controls);
     left->setContentsMargins(0, 0, 0, 0);
-    left->addWidget(new QLabel("Input files (DNG / JPG / INSV)", controls));
+    auto* exportButton = new QPushButton("EXPORT", controls);
+    exportButton->setMinimumHeight(56);
+    exportButton->setStyleSheet(
+        "QPushButton { font-size: 22px; font-weight: bold; color: white; "
+        "background-color: #E85D24; border-radius: 10px; } "
+        "QPushButton:hover { background-color: #FF7A3D; }");
+    left->addWidget(exportButton);
+    left->addWidget(new QLabel("Input files, folders or drag and drop", controls));
     fileList_ = new QListWidget(controls);
     fileList_->setSelectionMode(QAbstractItemView::ExtendedSelection);
     left->addWidget(fileList_, 1);
@@ -176,6 +192,11 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent) {
     left->addWidget(multibandCheck_);
     refineCheck_ = new QCheckBox("Refine poses from image features", controls);
     left->addWidget(refineCheck_);
+    seamsCheck_ = new QCheckBox("Graph-cut seam carving (experimental)", controls);
+    left->addWidget(seamsCheck_);
+    warpCheck_ = new QCheckBox("Local warp correction", controls);
+    warpCheck_->setChecked(true);
+    left->addWidget(warpCheck_);
 
     flipCombo_ = new QComboBox(controls);
     flipCombo_->addItem("Automatic orientation");
@@ -201,7 +222,7 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent) {
     // Right: large panorama on top, log at the bottom.
     auto* right = new QSplitter(Qt::Vertical, root);
     viewer_ = new ViewerWidget(right);
-    viewer_->setMinimumHeight(420);
+    viewer_->setMinimumHeight(500);
     right->addWidget(viewer_);
 
     auto* logPanel = new QWidget(right);
@@ -223,13 +244,13 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent) {
     right->addWidget(logPanel);
     right->setStretchFactor(0, 4);
     right->setStretchFactor(1, 1);
-    right->setSizes({680, 190});
+    right->setSizes({760, 220});
 
     root->addWidget(controls);
     root->addWidget(right);
     root->setStretchFactor(0, 0);
     root->setStretchFactor(1, 1);
-    root->setSizes({330, 1070});
+    root->setSizes({430, 1270});
     mainLayout->addWidget(root, 1);
 
     statusLabel_ = new QLabel("Ready", central);
@@ -246,6 +267,7 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent) {
     connect(removeButton, &QPushButton::clicked, this, &MainWindow::removeSelected);
     connect(stitchButton, &QPushButton::clicked, this, &MainWindow::runStitch);
     connect(renderButton, &QPushButton::clicked, this, &MainWindow::renderVideo);
+    connect(exportButton, &QPushButton::clicked, this, &MainWindow::quickExport);
     connect(autoButton, &QPushButton::clicked, this, &MainWindow::autoStitchAll);
     connect(fullscreenButton, &QPushButton::clicked, this, &MainWindow::openFullscreen);
     connect(savePano, &QPushButton::clicked, this, &MainWindow::savePanorama);
@@ -279,12 +301,47 @@ void MainWindow::addFiles() {
         this, "Select images or INSV video", lastDir(),
         "Images and video (*.dng *.jpg *.jpeg *.png *.insv *.mp4 *.mov *.mkv);;"
         "All files (*)");
-    for (const auto& file : files) {
-        if (fileList_->findItems(file, Qt::MatchExactly).isEmpty()) {
-            fileList_->addItem(file);
-            logMessage("Added " + file);
+    addPaths(files);
+}
+
+void MainWindow::addPaths(const QStringList& paths) {
+    const QStringList filters{"*.dng", "*.jpg", "*.jpeg", "*.png",
+                              "*.insv", "*.mp4", "*.mov", "*.mkv"};
+    int added = 0;
+    for (const auto& path : paths) {
+        const QFileInfo info(path);
+        if (info.isDir()) {
+            const QStringList names = QDir(path).entryList(filters, QDir::Files);
+            for (const auto& name : names) {
+                const QString child = QDir(path).filePath(name);
+                if (fileList_->findItems(child, Qt::MatchExactly).isEmpty()) {
+                    fileList_->addItem(child);
+                    ++added;
+                }
+            }
+        } else if (info.isFile()) {
+            if (fileList_->findItems(path, Qt::MatchExactly).isEmpty()) {
+                fileList_->addItem(path);
+                ++added;
+            }
         }
     }
+    if (added > 0)
+        logMessage("Added " + QString::number(added) + " file(s)");
+}
+
+void MainWindow::dragEnterEvent(QDragEnterEvent* event) {
+    if (event->mimeData() && event->mimeData()->hasUrls())
+        event->acceptProposedAction();
+}
+
+void MainWindow::dropEvent(QDropEvent* event) {
+    QStringList paths;
+    if (event->mimeData())
+        for (const auto& url : event->mimeData()->urls())
+            if (url.isLocalFile()) paths.append(url.toLocalFile());
+    addPaths(paths);
+    event->acceptProposedAction();
 }
 
 void MainWindow::addFolder() {
@@ -331,7 +388,9 @@ void MainWindow::runStitch() {
     setStatus("Loading inputs...");
     io::InputSession session;
     std::string error;
-    const int maxFrames = maxFramesSpin_->value();
+    // A single still panorama never needs every frame of an added video.
+    // Full video sampling belongs to the render button.
+    const int maxFrames = std::max(1, maxFramesSpin_->value());
     if (!io::loadInputs(paths, session, error, maxFrames)) {
         setStatus(QString::fromStdString("Error: " + error));
         QMessageBox::critical(this, "Input error", QString::fromStdString(error));
@@ -345,6 +404,8 @@ void MainWindow::runStitch() {
     options.fisheyeFovDegrees = fovSpin_->value();
     options.multiband = multibandCheck_->isChecked();
     options.refinePoses = refineCheck_->isChecked();
+    options.useSeams = seamsCheck_->isChecked();
+    options.useLocalWarp = warpCheck_->isChecked();
     options.flipLenses = flipCombo_->currentIndex() == 1
                              ? true
                              : (flipCombo_->currentIndex() == 2
@@ -389,6 +450,8 @@ void MainWindow::autoStitchAll() {
     options.fisheyeFovDegrees = fovSpin_->value();
     options.multiband = multibandCheck_->isChecked();
     options.refinePoses = refineCheck_->isChecked();
+    options.useSeams = seamsCheck_->isChecked();
+    options.useLocalWarp = warpCheck_->isChecked();
     options.flipLenses = flipCombo_->currentIndex() == 1
                              ? true
                              : (flipCombo_->currentIndex() == 2
@@ -493,6 +556,28 @@ void MainWindow::openFullscreen() {
     }
     auto* window = new FullscreenView(panorama_, this);
     window->setAttribute(Qt::WA_DeleteOnClose, true);
+}
+
+void MainWindow::quickExport() {
+    if (panorama_.empty()) {
+        renderVideo();
+        return;
+    }
+    const QString path = QFileDialog::getSaveFileName(
+        this, "Export panorama with GPano metadata", lastDir(), "JPEG (*.jpg)");
+    if (path.isEmpty()) return;
+    const QString temp = path + ".tmp.jpg";
+    if (!cv::imwrite(temp.toStdString(), panorama_)) {
+        QMessageBox::critical(this, "Export failed", "Could not write the temporary file.");
+        return;
+    }
+    std::string error;
+    const bool ok = injectGpano(temp.toStdString(), path.toStdString(),
+                                GPanoMetadata::forFullPano(panorama_.cols, panorama_.rows),
+                                error);
+    std::filesystem::remove(temp.toStdString());
+    if (ok) setStatus("Exported " + path);
+    else QMessageBox::critical(this, "Export failed", QString::fromStdString(error));
 }
 
 void MainWindow::savePanorama() {

@@ -25,8 +25,10 @@ add_library(ps_core
   src/core/rotation.cpp
   src/core/spherical.cpp
   src/core/lens_model.cpp
+  src/core/local_warp.cpp
   src/core/exposure.cpp
   src/core/seam.cpp
+  src/core/seam_carving.cpp
   src/core/blender.cpp
   src/core/pose_refiner.cpp
   src/core/stitcher.cpp

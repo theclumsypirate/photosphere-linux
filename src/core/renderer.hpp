@@ -5,6 +5,8 @@
 #include <vector>
 
 #include "core/lens_model.hpp"
+#include "core/local_warp.hpp"
+#include "core/seam.hpp"
 #include "core/spherical.hpp"
 #include "core/types.hpp"
 
@@ -15,6 +17,8 @@ struct PreparedFrame {
     CameraBasis basis;
     FrameIntrinsics intrinsics;
     double gain = 1.0;
+    double quality = 1.0; // 0..1, downweights frames with poor feature agreement
+    const LocalWarp* warp = nullptr;
     int lens = 0;
 };
 
@@ -29,6 +33,7 @@ struct RenderOptions {
 };
 
 Panorama renderPanorama(const std::vector<PreparedFrame>& frames,
-                        const RenderOptions& options);
+                        const RenderOptions& options,
+                        const SeamWeights* seams = nullptr);
 
 } // namespace ps

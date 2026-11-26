@@ -25,7 +25,8 @@ void usage() {
     std::cout << "photosphere-cli - offline 360 photo tools\n\n"
               << "Commands:\n"
               << "  gpu       show detected GPU and preferred decode backend\n"
-              << "Global options for stitch/auto/batch/video: --refine, --no-multiband,\n"
+              << "Global options for stitch/auto/batch/video: --refine, --seams,\n"
+              << "  --no-multiband,\n"
               << "  --flip, --no-flip\n"
               << "  stitch    -o OUT.jpg [-w WIDTH] [--fov DEG] [--flip|--no-flip]\n"
               << "            [--no-multiband] [--max-frames N] INPUT...\n"
@@ -95,7 +96,8 @@ bool cmdStitch(int argc, char** argv) {
             const std::string a = argv[i];
             if (a == "-o" || a == "-w" || a == "--fov" || a == "--max-frames") { ++i; continue; }
             if (a == "--no-multiband" || a == "--no-flip" || a == "--flip" ||
-                a == "--refine" || a == "stitch") continue;
+                a == "--refine" || a == "--seams" || a == "--no-seams" ||
+                a == "--keep-all" || a == "--no-local-warp" || a == "stitch") continue;
             files.push_back(a);
         }
         std::string s;
@@ -129,6 +131,9 @@ bool cmdStitch(int argc, char** argv) {
     if (hasFlag(argc, argv, "--flip")) options.flipLenses = true;
     options.multiband = !hasFlag(argc, argv, "--no-multiband");
     options.refinePoses = hasFlag(argc, argv, "--refine");
+    options.useSeams = hasFlag(argc, argv, "--seams");
+    options.dropOutliers = !hasFlag(argc, argv, "--keep-all");
+    options.useLocalWarp = !hasFlag(argc, argv, "--no-local-warp");
     std::string diagnostics;
     const ps::Panorama pano = ps::stitchSession(session, options, diagnostics);
     if (pano.equirect.empty()) { std::cerr << "stitch failed: " << diagnostics << "\n"; return false; }
@@ -170,6 +175,9 @@ bool cmdBatch(int argc, char** argv) {
     if (hasFlag(argc, argv, "--flip")) options.flipLenses = true;
     options.multiband = !hasFlag(argc, argv, "--no-multiband");
     options.refinePoses = hasFlag(argc, argv, "--refine");
+    options.useSeams = hasFlag(argc, argv, "--seams");
+    options.dropOutliers = !hasFlag(argc, argv, "--keep-all");
+    options.useLocalWarp = !hasFlag(argc, argv, "--no-local-warp");
 
     std::cout << "duration=" << duration << " s, seeking to " << times.size()
               << " timestamps, " << frames.size() << " lens frames\n";
@@ -215,6 +223,9 @@ bool cmdVideo(int argc, char** argv) {
     if (hasFlag(argc, argv, "--flip")) options.flipLenses = true;
     options.multiband = !hasFlag(argc, argv, "--no-multiband");
     options.refinePoses = hasFlag(argc, argv, "--refine");
+    options.useSeams = hasFlag(argc, argv, "--seams");
+    options.dropOutliers = !hasFlag(argc, argv, "--keep-all");
+    options.useLocalWarp = !hasFlag(argc, argv, "--no-local-warp");
 
     std::string error;
     ps::io::Mp4Writer writer(output, width, width / 2, fps);
@@ -250,8 +261,9 @@ bool cmdAuto(int argc, char** argv) {
     for (int i = 2; i < argc; ++i) {
         const std::string a = argv[i];
         if (a == "-o" || a == "-w" || a == "--fov" || a == "--max-frames") { ++i; continue; }
-        if (a == "--refine" || a == "--no-multiband" || a == "--flip" ||
-            a == "--no-flip") continue;
+        if (a == "--refine" || a == "--seams" || a == "--no-seams" ||
+            a == "--keep-all" || a == "--no-local-warp" || a == "--no-multiband" ||
+            a == "--flip" || a == "--no-flip") continue;
         files.push_back(a);
     }
     if (dir.empty() || files.empty()) {

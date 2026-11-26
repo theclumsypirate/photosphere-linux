@@ -18,6 +18,9 @@ struct PoseFrame {
 
 struct PoseRefineResult {
     std::vector<Mat3> rotations;
+    std::vector<int> inlierCounts; // matched inliers per frame, for quality filtering
+    std::vector<std::vector<cv::Point2f>> samplePixels;
+    std::vector<std::vector<cv::Point2f>> sampleResiduals;
     int edgeCount = 0;
     int totalInliers = 0;
 };

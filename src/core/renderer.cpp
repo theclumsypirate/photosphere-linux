@@ -16,7 +16,7 @@ constexpr double kMinDepth = 1e-4;
 void accumulateLevel(const std::vector<PreparedFrame>& frames,
                      cv::Mat& colorSum, cv::Mat& weightSum,
                      const RenderOptions& options, int level,
-                     double& coveredPixels) {
+                     const SeamWeights* seams, double& coveredPixels) {
     const int divisor = 1 << level;
     const int w = colorSum.cols, h = colorSum.rows;
     const int interpolation = level == 0 ? cv::INTER_LANCZOS4 : cv::INTER_LINEAR;
@@ -65,8 +65,14 @@ void accumulateLevel(const std::vector<PreparedFrame>& frames,
                 if (depth <= kMinDepth) { mx[col] = -1.f; my[col] = -1.f; ww[col] = 0.f; continue; }
                 const double lateral = cl * rightH[col] + sl * b.right[2];
                 const double vertical = cl * upH[col] + sl * b.up[2];
-                const double idealX = cx + in.focalXPx * lateral / depth;
-                const double idealY = cy - in.focalYPx * vertical / depth;
+                double idealX = cx + in.focalXPx * lateral / depth;
+                double idealY = cy - in.focalYPx * vertical / depth;
+                if (frame.warp && !frame.warp->empty()) {
+                    const cv::Point2f correction =
+                        frame.warp->at(idealX, idealY, in.widthPx, in.heightPx);
+                    idealX += correction.x;
+                    idealY += correction.y;
+                }
                 double sx = idealX, sy = idealY;
                 if (in.hasRadial) {
                     const double x = idealX - cx, y = idealY - cy;
@@ -79,7 +85,11 @@ void accumulateLevel(const std::vector<PreparedFrame>& frames,
                 }
                 mx[col] = static_cast<float>(sx / divisor);
                 my[col] = static_cast<float>(sy / divisor);
-                ww[col] = static_cast<float>(featherWeight(idealX, idealY, cx, cy));
+                const float baseWeight = seams
+                                             ? seams->weightFor(fi, row, col, divisor)
+                                             : static_cast<float>(featherWeight(
+                                                   idealX, idealY, cx, cy));
+                ww[col] = baseWeight * static_cast<float>(frame.quality);
             }
         }
         if (level == 0) coveredPixels += cv::countNonZero(weights);
@@ -103,7 +113,8 @@ void accumulateLevel(const std::vector<PreparedFrame>& frames,
 } // namespace
 
 Panorama renderPanorama(const std::vector<PreparedFrame>& frames,
-                        const RenderOptions& options) {
+                        const RenderOptions& options,
+                        const SeamWeights* seams) {
     Panorama out;
     if (frames.empty() || options.width <= 0) return out;
     const int width = options.width;
@@ -121,7 +132,7 @@ Panorama renderPanorama(const std::vector<PreparedFrame>& frames,
         PyramidLevel pl;
         pl.color = cv::Mat::zeros(lh, lw, CV_32FC3);
         pl.weight = cv::Mat::zeros(lh, lw, CV_32FC1);
-        accumulateLevel(frames, pl.color, pl.weight, options, level, covered);
+        accumulateLevel(frames, pl.color, pl.weight, options, level, seams, covered);
         pyramid.push_back(std::move(pl));
     }
     if (levels == 1) {

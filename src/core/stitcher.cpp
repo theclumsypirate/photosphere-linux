@@ -1,7 +1,11 @@
 #include "core/stitcher.hpp"
 
 #include "core/blender.hpp"
+#include "core/exposure.hpp"
+#include "core/local_warp.hpp"
 #include "core/pose_refiner.hpp"
+#include "core/seam.hpp"
+#include "core/seam_carving.hpp"
 #include "core/renderer.hpp"
 
 #include <opencv2/imgproc.hpp>
@@ -132,7 +136,7 @@ Panorama stitchDualFisheye(const std::vector<LensFrame>& pair,
                                : reconstructPyramid(pyramid);
     out.seamMask = pyramid.front().weight.clone();
     const int covered = cv::countNonZero(out.seamMask);
-    diagnostics = "dual fisheye, fov=" + std::to_string(options.fisheyeFovDegrees) +
+    diagnostics += "dual fisheye, fov=" + std::to_string(options.fisheyeFovDegrees) +
                   ", coverage=" +
                   std::to_string(100.0 * covered / static_cast<double>(w * h)) + "%";
     return out;
@@ -176,35 +180,96 @@ Panorama stitchMultiFrame(const std::vector<LensFrame>& frames,
         pf.pose = pose;
         poseFrames.push_back(std::move(pf));
     }
+    // A single feature pass serves both pose refinement and outlier removal.
+    PoseRefineResult refined;
+    const bool needFeatures = options.refinePoses || options.dropOutliers;
+    if (needFeatures) refined = refinePoses(poseFrames);
+
+    std::vector<double> quality(poseFrames.size(), 1.0);
+    int weakCount = 0;
+    if (options.dropOutliers && refined.inlierCounts.size() == poseFrames.size()) {
+        std::vector<int> positive;
+        for (int count : refined.inlierCounts)
+            if (count > 0) positive.push_back(count);
+        std::sort(positive.begin(), positive.end());
+        const double median = positive.empty()
+                                  ? 0.0
+                                  : static_cast<double>(positive[positive.size() / 2]);
+        for (size_t i = 0; i < poseFrames.size(); ++i) {
+            const double score = median > 0
+                                     ? std::clamp(refined.inlierCounts[i] / (0.5 * median),
+                                                  0.0, 1.0)
+                                     : 1.0;
+            quality[i] = std::max(0.04, score);
+            if (quality[i] < 0.3) ++weakCount;
+        }
+    }
+
     std::vector<PreparedFrame> prepared;
     prepared.reserve(poseFrames.size());
-    if (options.refinePoses) {
-        const PoseRefineResult refined = refinePoses(poseFrames);
-        for (size_t i = 0; i < poseFrames.size(); ++i) {
-            PreparedFrame pf;
-            pf.image = poseFrames[i].image;
-            pf.intrinsics = poseFrames[i].intrinsics;
-            pf.basis = basisFromMatrix(refined.rotations[i]);
-            prepared.push_back(std::move(pf));
+    for (size_t i = 0; i < poseFrames.size(); ++i) {
+        PreparedFrame pf;
+        pf.image = poseFrames[i].image;
+        pf.intrinsics = poseFrames[i].intrinsics;
+        pf.basis = options.refinePoses && refined.rotations.size() == poseFrames.size()
+                       ? basisFromMatrix(refined.rotations[i])
+                       : basisFromPose(poseFrames[i].pose);
+        pf.quality = quality[i];
+        prepared.push_back(std::move(pf));
+    }
+    diagnostics = "multi-frame, " + std::to_string(prepared.size()) + " frames";
+    if (weakCount > 0)
+        diagnostics += ", downweighted " + std::to_string(weakCount) + " weak frames";
+    if (options.refinePoses)
+        diagnostics += ", " + std::to_string(refined.edgeCount) + " refined pose edges";
+    if (!options.refinePoses && !options.dropOutliers) diagnostics += ", EXIF poses";
+    // Per frame exposure gains from the overlap chain.
+    std::vector<double> means;
+    means.reserve(prepared.size());
+    for (const auto& pf : prepared) {
+        cv::Mat gray;
+        cv::cvtColor(pf.image, gray, cv::COLOR_BGR2GRAY);
+        means.push_back(std::max(1e-6, cv::mean(gray)[0]));
+    }
+    std::vector<std::pair<int, int>> edges;
+    for (size_t i = 0; i + 1 < prepared.size(); ++i) {
+        edges.emplace_back(static_cast<int>(i), static_cast<int>(i + 1));
+        if (i + 2 < prepared.size())
+            edges.emplace_back(static_cast<int>(i), static_cast<int>(i + 2));
+    }
+    const std::vector<float> gains = solveGains(means, edges);
+    for (size_t i = 0; i < prepared.size(); ++i)
+        prepared[i].gain = gains[i];
+
+    // Graph cut seam carving on reduced warped images, followed by a narrow
+    // feather around each cut. This keeps one frame per pixel and suppresses
+    // moving objects that a wide cross fade would show twice.
+    const SeamWeights* activeSeams = nullptr;
+    SeamWeights seams;
+    if (options.useSeams) {
+        seams = carveSeams(prepared, options.width, options.width / 2, 4);
+        if (!seams.empty()) {
+            activeSeams = &seams;
+            diagnostics += ", graph-cut seam";
         }
-        diagnostics = "multi-frame, " + std::to_string(prepared.size()) +
-                      " frames, " + std::to_string(refined.edgeCount) +
-                      " refined pose edges";
-    } else {
-        for (const auto& pf : poseFrames) {
-            PreparedFrame out;
-            out.image = pf.image;
-            out.intrinsics = pf.intrinsics;
-            out.basis = basisFromPose(pf.pose);
-            prepared.push_back(std::move(out));
+    }
+    std::vector<LocalWarp> warps;
+    if (options.useLocalWarp && needFeatures &&
+        refined.samplePixels.size() == poseFrames.size()) {
+        warps.reserve(prepared.size());
+        for (size_t i = 0; i < prepared.size(); ++i) {
+            warps.push_back(estimateLocalWarp(
+                refined.samplePixels[i], refined.sampleResiduals[i],
+                prepared[i].intrinsics.widthPx, prepared[i].intrinsics.heightPx));
+            if (!warps.back().empty()) prepared[i].warp = &warps.back();
         }
-        diagnostics = "multi-frame, " + std::to_string(prepared.size()) +
-                      " frames, EXIF poses";
+        diagnostics += ", local warp";
     }
     RenderOptions ro;
     ro.width = options.width;
     ro.multiband = options.multiband;
-    return renderPanorama(prepared, ro);
+    diagnostics += ", gain";
+    return renderPanorama(prepared, ro, activeSeams);
 }
 
 } // namespace
@@ -213,13 +278,20 @@ Panorama stitchSession(const io::InputSession& session,
                        const StitchOptions& options,
                        std::string& diagnostics) {
     if (session.frames.empty()) { diagnostics = "no frames"; return {}; }
+    // Use the most recently added source, not the first one. When a video is
+    // followed by a still, the user expects the still to be stitched.
+    const std::string lastSource = session.frames.back().source;
     std::vector<LensFrame> pair;
-    for (const auto& f : session.frames) {
-        if (f.lens == 0 || f.lens == 1) pair.push_back(f);
+    for (auto it = session.frames.rbegin(); it != session.frames.rend(); ++it) {
+        if (it->source != lastSource) continue;
+        if (it->lens != 0 && it->lens != 1) continue;
+        pair.push_back(*it);
         if (pair.size() == 2 && pair[0].lens != pair[1].lens) break;
     }
-    if (pair.size() >= 2 && pair[0].lens != pair[1].lens)
+    if (pair.size() >= 2 && pair[0].lens != pair[1].lens) {
+        diagnostics = "source: " + lastSource + ", ";
         return stitchDualFisheye(pair, options, diagnostics);
+    }
 
     int posedCount = 0;
     for (const auto& f : session.frames)

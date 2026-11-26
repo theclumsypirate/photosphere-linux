@@ -25,6 +25,9 @@ class MainWindow : public QMainWindow {
 public:
     explicit MainWindow(QWidget* parent = nullptr);
 
+public slots:
+    void addPaths(const QStringList& paths);
+
 private slots:
     void addFiles();
     void addFolder();
@@ -32,10 +35,15 @@ private slots:
     void runStitch();
     void autoStitchAll();
     void renderVideo();
+    void quickExport();
     void savePanorama();
     void saveLittlePlanet();
     void saveTagged();
     void openFullscreen();
+
+protected:
+    void dragEnterEvent(QDragEnterEvent* event) override;
+    void dropEvent(QDropEvent* event) override;
 
 private:
     std::vector<std::string> inputPaths() const;
@@ -50,6 +58,8 @@ private:
     QSpinBox* outputFpsSpin_ = nullptr;
     QCheckBox* multibandCheck_ = nullptr;
     QCheckBox* refineCheck_ = nullptr;
+    QCheckBox* seamsCheck_ = nullptr;
+    QCheckBox* warpCheck_ = nullptr;
     QComboBox* flipCombo_ = nullptr;
     QLabel* statusLabel_ = nullptr;
     QPlainTextEdit* logEdit_ = nullptr;

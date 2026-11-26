@@ -16,6 +16,9 @@ struct StitchOptions {
     bool flipLenses = true;
     bool multiband = true;
     bool refinePoses = false;
+    bool useSeams = false;
+    bool dropOutliers = true;
+    bool useLocalWarp = true;
     int maxFrames = 0;
 };
 
