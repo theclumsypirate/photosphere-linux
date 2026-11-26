@@ -15,13 +15,13 @@ This is a simple app with a GUI for automatic stitching images or videos.
 
 ### Dual fisheye input
 <p align="center">
-  <img src="docs/exemple_photo.jpg" width="70%" alt="Dual fisheye input">
+  <img src="docs/exemple_photo.jpg" width="40%" alt="Dual fisheye input">
 </p>
 
 
 ### Stitched panorama
 <p align="center">
-  <img src="docs/example_360_stitched_photo.jpg" width="70%" alt="Stitched panorama">
+  <img src="docs/example_360_stitched_photo.jpg" width="40%" alt="Stitched panorama">
 </p>
 
 
