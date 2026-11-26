@@ -1,4 +1,4 @@
-# Photsphere Linux
+# Photosphere Linux
 
 This is a simple app with a GUI to stitch images or videos
 - Supports DNG (RAW image file format)
