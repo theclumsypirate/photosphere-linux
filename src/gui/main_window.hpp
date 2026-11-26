@@ -48,6 +48,7 @@ private slots:
     void saveLittlePlanet();
     void saveTagged();
     void openFullscreen();
+    void toggleFullscreen();
 
 protected:
     void dragEnterEvent(QDragEnterEvent* event) override;

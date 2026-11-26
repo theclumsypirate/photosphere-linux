@@ -323,6 +323,9 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent) {
         setStatus("Log copied to clipboard");
     });
     connect(clearLogButton, &QPushButton::clicked, logEdit_, &QPlainTextEdit::clear);
+    auto* fullscreenShortcut = new QShortcut(QKeySequence(Qt::Key_F11), this);
+    connect(fullscreenShortcut, &QShortcut::activated, this,
+            &MainWindow::toggleFullscreen);
 }
 
 void MainWindow::logMessage(const QString& text) {
@@ -738,6 +741,11 @@ void MainWindow::renderVideo() {
         }
     });
     exportThread_->start();
+}
+
+void MainWindow::toggleFullscreen() {
+    if (isFullScreen()) showNormal();
+    else showFullScreen();
 }
 
 void MainWindow::openFullscreen() {
