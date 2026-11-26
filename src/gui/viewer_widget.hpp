@@ -32,6 +32,7 @@ public:
 
 signals:
     void snapshotRequested();
+    void panoramaSaveRequested();
 
 public slots:
     void resetView();
@@ -65,6 +66,7 @@ private:
     bool dragging_ = false;
     bool hasTexture_ = false;
     QPushButton* snapshotButton_ = nullptr;
+    QPushButton* savePanoButton_ = nullptr;
 };
 
 } // namespace ps::gui

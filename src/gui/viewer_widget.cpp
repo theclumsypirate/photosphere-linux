@@ -57,6 +57,21 @@ ViewerWidget::ViewerWidget(QWidget* parent) : QOpenGLWidget(parent) {
     snapshotButton_->show();
     connect(snapshotButton_, &QPushButton::clicked,
             this, &ViewerWidget::snapshotRequested);
+
+    savePanoButton_ = new QPushButton("Save panorama", this);
+    savePanoButton_->setIcon(QIcon(":/icons/icon.png"));
+    savePanoButton_->setIconSize(QSize(20, 20));
+    savePanoButton_->setToolTip("Save the full equirectangular panorama");
+    savePanoButton_->setFixedSize(150, 40);
+    savePanoButton_->setStyleSheet(
+        "QPushButton { background: rgba(30,32,42,220); color: white; "
+        "border: 1px solid #555; border-radius: 6px; } "
+        "QPushButton:hover { background: rgba(70,74,92,240); }");
+    savePanoButton_->move(width() - 292, height() - 52);
+    savePanoButton_->raise();
+    savePanoButton_->show();
+    connect(savePanoButton_, &QPushButton::clicked,
+            this, &ViewerWidget::panoramaSaveRequested);
 }
 
 ViewerWidget::~ViewerWidget() {
@@ -200,6 +215,8 @@ void ViewerWidget::resizeEvent(QResizeEvent* event) {
     QOpenGLWidget::resizeEvent(event);
     if (snapshotButton_)
         snapshotButton_->move(width() - 132, height() - 52);
+    if (savePanoButton_)
+        savePanoButton_->move(width() - 292, height() - 52);
 }
 
 QPixmap ViewerWidget::currentView() {

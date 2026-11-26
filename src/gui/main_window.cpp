@@ -120,6 +120,20 @@ bool autoFlipForAll(const std::vector<std::string>& paths) {
     return true;
 }
 
+bool saveImageFile(const QString& path, const cv::Mat& image,
+                   const QString& defaultExtension, QString& error) {
+    QString target = path;
+    const QString name = target.section('/', -1);
+    if (!name.contains('.')) target += defaultExtension;
+    try {
+        if (cv::imwrite(target.toStdString(), image)) return true;
+        error = "Could not write " + target;
+    } catch (const cv::Exception& e) {
+        error = QString::fromLocal8Bit(e.what());
+    }
+    return false;
+}
+
 QString lastDir() {
     return QString::fromStdString((std::filesystem::path(QDir::homePath().toStdString()) /
                                    "Downloads").string());
@@ -298,6 +312,7 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent) {
     connect(renderButton, &QPushButton::clicked, this, &MainWindow::renderVideo);
     connect(exportButton_, &QPushButton::clicked, this, &MainWindow::renderVideo);
     connect(viewer_, &ViewerWidget::snapshotRequested, this, &MainWindow::saveSnapshot);
+    connect(viewer_, &ViewerWidget::panoramaSaveRequested, this, &MainWindow::savePanorama);
     connect(autoButton, &QPushButton::clicked, this, &MainWindow::autoStitchAll);
     connect(fullscreenButton, &QPushButton::clicked, this, &MainWindow::openFullscreen);
     connect(savePano, &QPushButton::clicked, this, &MainWindow::savePanorama);
@@ -634,7 +649,10 @@ void MainWindow::autoStitchAll() {
                                  std::string(3 - std::to_string(index).size(), '0') +
                                  std::to_string(index) + ".jpg";
         const std::string path = (std::filesystem::path(dir.toStdString()) / name).string();
-        cv::imwrite(path, item.panorama.equirect);
+        QString saveError;
+        const bool saved = saveImageFile(QString::fromStdString(path),
+                                         item.panorama.equirect, ".jpg", saveError);
+        if (!saved) logMessage("Save failed: " + saveError);
         logMessage(QString::fromStdString(item.source) + " -> " + QString::fromStdString(path));
         ++index;
     }
@@ -740,8 +758,9 @@ void MainWindow::quickExport() {
         this, "Export panorama with GPano metadata", lastDir(), "JPEG (*.jpg)");
     if (path.isEmpty()) return;
     const QString temp = path + ".tmp.jpg";
-    if (!cv::imwrite(temp.toStdString(), panorama_)) {
-        QMessageBox::critical(this, "Export failed", "Could not write the temporary file.");
+    QString saveError;
+    if (!saveImageFile(temp, panorama_, ".jpg", saveError)) {
+        QMessageBox::critical(this, "Export failed", saveError);
         return;
     }
     std::string error;
@@ -774,8 +793,9 @@ void MainWindow::savePanorama() {
     if (panorama_.empty()) { QMessageBox::warning(this, "Nothing to save", "Stitch first."); return; }
     const QString path = QFileDialog::getSaveFileName(this, "Save panorama", lastDir(), "JPEG (*.jpg)");
     if (path.isEmpty()) return;
-    if (cv::imwrite(path.toStdString(), panorama_)) setStatus("Saved " + path);
-    else QMessageBox::critical(this, "Save failed", "Could not write the file.");
+    QString saveError;
+    if (saveImageFile(path, panorama_, ".jpg", saveError)) setStatus("Saved " + path);
+    else QMessageBox::critical(this, "Save failed", saveError);
 }
 
 void MainWindow::saveLittlePlanet() {
@@ -785,8 +805,9 @@ void MainWindow::saveLittlePlanet() {
     LittlePlanetOptions options;
     options.outputSize = std::min(4096, panorama_.cols / 2);
     const cv::Mat planet = convertToLittlePlanet(panorama_, options);
-    if (cv::imwrite(path.toStdString(), planet)) setStatus("Saved " + path);
-    else QMessageBox::critical(this, "Save failed", "Could not write the file.");
+    QString saveError;
+    if (saveImageFile(path, planet, ".png", saveError)) setStatus("Saved " + path);
+    else QMessageBox::critical(this, "Save failed", saveError);
 }
 
 void MainWindow::saveTagged() {
@@ -794,8 +815,9 @@ void MainWindow::saveTagged() {
     const QString path = QFileDialog::getSaveFileName(this, "Save tagged panorama", lastDir(), "JPEG (*.jpg)");
     if (path.isEmpty()) return;
     const QString temp = path + ".tmp.jpg";
-    if (!cv::imwrite(temp.toStdString(), panorama_)) {
-        QMessageBox::critical(this, "Save failed", "Could not write the temporary file.");
+    QString saveError;
+    if (!saveImageFile(temp, panorama_, ".jpg", saveError)) {
+        QMessageBox::critical(this, "Save failed", saveError);
         return;
     }
     std::string error;
