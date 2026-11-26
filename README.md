@@ -10,7 +10,7 @@ This is a simple app with a GUI for automatic stitching images or videos.
 
 ### Qt GUI
 <p align="center">
-  <img src="docs/linux_GUI_app_1.png" width="70%" alt="GUI">
+  <img src="docs/linux_GUI_app_2.png" width="70%" alt="GUI">
 </p>
 
 ### Dual fisheye input
