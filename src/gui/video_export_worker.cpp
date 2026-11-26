@@ -5,6 +5,7 @@
 #include "io/video_writer.hpp"
 
 #include <algorithm>
+#include <cmath>
 #include <vector>
 
 namespace ps::gui {
@@ -29,13 +30,7 @@ void VideoExportWorker::run() {
     stitchOptions.useLocalWarp = false;
     stitchOptions.useSeams = false;
 
-    io::Mp4Writer writer(options_.output, width, width / 2, options_.fps);
     std::string error;
-    if (!writer.open(error)) {
-        emit finished(false, QString::fromStdString(error));
-        return;
-    }
-
     const double duration = io::insvDuration(options_.input);
     const double end = options_.endTime > 0
                            ? std::min(options_.endTime, duration)
@@ -45,11 +40,23 @@ void VideoExportWorker::run() {
         times.push_back(t);
     if (times.empty()) times.push_back(options_.startTime);
 
+    io::Mp4Writer writer(options_.output, width, width / 2, options_.fps);
+    const double videoEnd = options_.startTime +
+                            static_cast<double>(times.size()) * options_.everySeconds;
+    writer.setAudioSource(options_.input, options_.startTime,
+                          options_.endTime > 0 ? std::min(options_.endTime, videoEnd)
+                                               : videoEnd);
+    if (!writer.open(error)) {
+        emit finished(false, QString::fromStdString(error));
+        return;
+    }
+
     int written = 0;
     for (size_t i = 0; i < times.size(); ++i) {
         if (cancelled()) break;
         std::vector<LensFrame> frames;
-        if (!io::readInsvAtTimes(options_.input, {times[i]}, frames, error)) continue;
+        if (!io::readInsvAtTimes(options_.input, std::vector<double>{times[i]},
+                                 frames, error)) continue;
         if (frames.size() < 2 || frames[0].lens == frames[1].lens) continue;
         std::string diagnostics;
         const Panorama pano = stitchDualFisheye({frames[0], frames[1]},

@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.20)
-project(photosphere_linux VERSION 0.1.0 LANGUAGES CXX)
+project(photosphere_linux VERSION 1.0.1 LANGUAGES CXX)
 
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -94,7 +94,7 @@ if(PS_BUILD_TESTS)
 endif()
 
 if(PS_BUILD_GUI)
-  find_package(Qt6 REQUIRED COMPONENTS Widgets OpenGLWidgets)
+  find_package(Qt6 REQUIRED COMPONENTS Widgets OpenGLWidgets Network)
   qt_standard_project_setup()
   qt_add_executable(photosphere-gui
     src/gui/main.cpp
@@ -106,7 +106,7 @@ if(PS_BUILD_GUI)
     src/gui/video_export_worker.cpp
     src/gui/resources.qrc)
   target_link_libraries(photosphere-gui PRIVATE
-    ps_io ps_core Qt6::Widgets Qt6::OpenGLWidgets)
+    ps_io ps_core Qt6::Widgets Qt6::OpenGLWidgets Qt6::Network)
   install(TARGETS photosphere-gui RUNTIME DESTINATION bin)
 endif()
 

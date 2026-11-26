@@ -32,10 +32,28 @@ struct Mp4Writer::Impl {
     int64_t pts = 0;
     bool opened = false;
     bool finished = false;
+
+    std::string audioPath;
+    double audioStart = 0.0;
+    double audioEnd = 0.0;
+    bool hasAudioSource = false;
+    AVFormatContext* audioFormat = nullptr;
+    AVStream* audioOutputStream = nullptr;
+    int audioStreamIndex = -1;
+    std::vector<AVPacket*> audioPackets;
+    size_t audioIndex = 0;
 };
 
 void Mp4Writer::setPreferHardwareEncoder(bool enabled) {
     g_preferHardwareEncoder = enabled;
+}
+
+void Mp4Writer::setAudioSource(const std::string& inputPath, double startTime,
+                               double endTime) {
+    impl_->audioPath = inputPath;
+    impl_->audioStart = std::max(0.0, startTime);
+    impl_->audioEnd = endTime;
+    impl_->hasAudioSource = !inputPath.empty();
 }
 
 Mp4Writer::Mp4Writer(const std::string& path, int width, int height, double fps)
@@ -75,8 +93,9 @@ bool Mp4Writer::open(std::string& error) {
         context->bit_rate = 12'000'000;
         context->width = impl_->width;
         context->height = impl_->height;
-        context->time_base = AVRational{1, std::max(1, static_cast<int>(impl_->fps))};
-        context->framerate = AVRational{std::max(1, static_cast<int>(impl_->fps)), 1};
+        const AVRational rate = av_d2q(impl_->fps, 1000);
+        context->framerate = rate;
+        context->time_base = av_inv_q(rate);
         context->gop_size = 25;
         context->max_b_frames = 0;
         context->pix_fmt = AV_PIX_FMT_YUV420P;
@@ -105,6 +124,49 @@ bool Mp4Writer::open(std::string& error) {
     }
     impl_->stream->time_base = ctx->time_base;
     impl_->stream->avg_frame_rate = ctx->framerate;
+
+    // Copy the source audio track. Packets are buffered so we can trim the
+    // selected time range and interleave them with the encoded video frames.
+    if (impl_->hasAudioSource &&
+        avformat_open_input(&impl_->audioFormat, impl_->audioPath.c_str(),
+                            nullptr, nullptr) >= 0 &&
+        avformat_find_stream_info(impl_->audioFormat, nullptr) >= 0) {
+        for (unsigned i = 0; i < impl_->audioFormat->nb_streams; ++i) {
+            AVStream* input = impl_->audioFormat->streams[i];
+            if (input->codecpar->codec_type != AVMEDIA_TYPE_AUDIO) continue;
+            AVStream* output = avformat_new_stream(impl_->format, nullptr);
+            if (!output || avcodec_parameters_copy(output->codecpar,
+                                                   input->codecpar) < 0) break;
+            output->codecpar->codec_tag = 0;
+            output->time_base = input->time_base;
+            impl_->audioOutputStream = output;
+            impl_->audioStreamIndex = static_cast<int>(i);
+            const double timeBase = av_q2d(input->time_base);
+            AVPacket* packet = av_packet_alloc();
+            if (packet) {
+                while (av_read_frame(impl_->audioFormat, packet) >= 0) {
+                    if (packet->stream_index == static_cast<int>(i)) {
+                        const int64_t timestamp = packet->pts != AV_NOPTS_VALUE
+                                                      ? packet->pts
+                                                      : packet->dts;
+                        const double seconds = timestamp * timeBase;
+                        if (seconds >= impl_->audioStart &&
+                            (impl_->audioEnd <= 0 || seconds <= impl_->audioEnd)) {
+                            AVPacket* copy = av_packet_alloc();
+                            if (copy && av_packet_ref(copy, packet) >= 0)
+                                impl_->audioPackets.push_back(copy);
+                            else
+                                av_packet_free(&copy);
+                        }
+                    }
+                    av_packet_unref(packet);
+                }
+                av_packet_free(&packet);
+            }
+            break;
+        }
+    }
+
     if (!(impl_->format->oformat->flags & AVFMT_NOFILE)) {
         if (avio_open(&impl_->format->pb, impl_->path.c_str(), AVIO_FLAG_WRITE) < 0) {
             error = "cannot open output file";
@@ -130,12 +192,39 @@ bool Mp4Writer::open(std::string& error) {
     return true;
 }
 
+void Mp4Writer::pumpAudio(double uptoSeconds, bool all) {
+    if (!impl_->audioOutputStream || impl_->audioStreamIndex < 0) return;
+    AVStream* input = impl_->audioFormat->streams[impl_->audioStreamIndex];
+    AVStream* output = impl_->audioOutputStream;
+    const AVRational inTimeBase = input->time_base;
+    const double inSecondsPerTick = std::max(1e-9, av_q2d(inTimeBase));
+    const int64_t startTicks = static_cast<int64_t>(impl_->audioStart / inSecondsPerTick);
+    while (impl_->audioIndex < impl_->audioPackets.size()) {
+        AVPacket* packet = impl_->audioPackets[impl_->audioIndex];
+        const int64_t timestamp = packet->pts != AV_NOPTS_VALUE ? packet->pts : packet->dts;
+        const double seconds = timestamp * inSecondsPerTick;
+        if (!all && seconds > uptoSeconds) break;
+        if (packet->pts != AV_NOPTS_VALUE)
+            packet->pts = av_rescale_q(packet->pts - startTicks, inTimeBase,
+                                       output->time_base);
+        if (packet->dts != AV_NOPTS_VALUE)
+            packet->dts = av_rescale_q(packet->dts - startTicks, inTimeBase,
+                                       output->time_base);
+        packet->duration = av_rescale_q(packet->duration, inTimeBase, output->time_base);
+        packet->stream_index = output->index;
+        av_interleaved_write_frame(impl_->format, packet);
+        av_packet_unref(packet);
+        ++impl_->audioIndex;
+    }
+}
+
 bool Mp4Writer::write(const cv::Mat& bgr, std::string& error) {
     if (!impl_->opened || impl_->finished) { error = "writer is not open"; return false; }
     if (bgr.empty() || bgr.cols != impl_->width || bgr.rows != impl_->height) {
         error = "frame dimensions do not match the writer";
         return false;
     }
+    pumpAudio(static_cast<double>(impl_->pts) / impl_->fps, false);
     if (av_frame_make_writable(impl_->frame) < 0) { error = "cannot make frame writable"; return false; }
     if (!impl_->sws) {
         impl_->sws = sws_getContext(impl_->width, impl_->height, AV_PIX_FMT_BGR24,
@@ -175,7 +264,11 @@ void Mp4Writer::finish() {
         av_interleaved_write_frame(impl_->format, impl_->packet);
         av_packet_unref(impl_->packet);
     }
+    pumpAudio(0, true);
     av_write_trailer(impl_->format);
+    for (AVPacket* packet : impl_->audioPackets) av_packet_free(&packet);
+    impl_->audioPackets.clear();
+    if (impl_->audioFormat) avformat_close_input(&impl_->audioFormat);
     if (impl_->sws) sws_freeContext(impl_->sws);
     if (impl_->frame) av_frame_free(&impl_->frame);
     if (impl_->packet) av_packet_free(&impl_->packet);
@@ -194,6 +287,8 @@ namespace ps::io {
 struct Mp4Writer::Impl {};
 
 void Mp4Writer::setPreferHardwareEncoder(bool) {}
+void Mp4Writer::setAudioSource(const std::string&, double, double) {}
+void Mp4Writer::pumpAudio(double, bool) {}
 
 Mp4Writer::Mp4Writer(const std::string&, int, int, double) : impl_(new Impl()) {}
 Mp4Writer::~Mp4Writer() { delete impl_; }

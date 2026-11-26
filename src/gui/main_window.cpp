@@ -200,7 +200,7 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent) {
 
     videoStepSpin_ = new QSpinBox(controls);
     videoStepSpin_->setRange(1, 500);
-    videoStepSpin_->setValue(5);
+    videoStepSpin_->setValue(1);
     left->addWidget(new QLabel("Video frame step (1 = every frame)"));
     left->addWidget(videoStepSpin_);
 

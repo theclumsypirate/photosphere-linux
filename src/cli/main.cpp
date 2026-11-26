@@ -215,8 +215,12 @@ bool cmdVideo(int argc, char** argv) {
         std::cerr << "video: need -i VIDEO.insv -o OUT.mp4\n";
         return false;
     }
-    const double everySeconds = numberOption(argc, argv, "--every", 0.2);
-    const double fps = numberOption(argc, argv, "--fps", 25.0);
+    // By default stitch every source frame, so the result is real video.
+    const double everySeconds = numberOption(argc, argv, "--every",
+                                             1.0 / ps::io::insvFrameRate(input));
+    // Export keeps the frame rate of the original video unless overridden.
+    const double fps = numberOption(argc, argv, "--fps",
+                                    ps::io::insvFrameRate(input));
     const double duration = ps::io::insvDuration(input);
     std::vector<double> times;
     for (double t = 0.0; t < duration; t += everySeconds) times.push_back(t);
@@ -238,6 +242,8 @@ bool cmdVideo(int argc, char** argv) {
 
     std::string error;
     ps::io::Mp4Writer writer(output, width, width / 2, fps);
+    writer.setAudioSource(input, 0.0,
+                          static_cast<double>(times.size()) * everySeconds);
     if (!writer.open(error)) { std::cerr << "video: " << error << "\n"; return false; }
     std::cout << "duration=" << duration << " s, " << times.size()
               << " equirectangular frames, " << width << "x" << width / 2 << " @ " << fps

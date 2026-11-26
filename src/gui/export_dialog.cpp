@@ -27,12 +27,12 @@ ExportDialog::ExportDialog(double durationSeconds, double sourceFps,
 
     stepSpin_ = new QSpinBox(this);
     stepSpin_->setRange(1, 500);
-    stepSpin_->setValue(5);
+    stepSpin_->setValue(1);
     stepSpin_->setSuffix(" source frames");
 
     fpsSpin_ = new QDoubleSpinBox(this);
     fpsSpin_->setRange(1.0, 120.0);
-    fpsSpin_->setValue(60.0);
+    fpsSpin_->setValue(sourceFps > 0 ? sourceFps : 25.0);
     fpsSpin_->setSuffix(" fps");
 
     startSpin_ = new QDoubleSpinBox(this);

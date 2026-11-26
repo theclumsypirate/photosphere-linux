@@ -5,9 +5,17 @@
 #include <QDialogButtonBox>
 #include <QDoubleSpinBox>
 #include <QFormLayout>
+#include <QHBoxLayout>
+#include <QJsonDocument>
+#include <QJsonObject>
 #include <QLabel>
 #include <QLineEdit>
+#include <QNetworkAccessManager>
+#include <QNetworkReply>
+#include <QNetworkRequest>
+#include <QPushButton>
 #include <QSettings>
+#include <QUrl>
 #include <QVBoxLayout>
 
 namespace ps::gui {
@@ -15,6 +23,9 @@ namespace ps::gui {
 namespace {
 const char* kOrganization = "theclumsypirate";
 const char* kApplication = "photosphere-linux";
+const char* kCurrentVersion = "v1.0.1";
+const char* kLatestReleaseUrl =
+    "https://api.github.com/repos/theclumsypirate/photosphere-linux/releases/latest";
 }
 
 AppSettings loadAppSettings() {
@@ -86,6 +97,14 @@ GeneralSettingsDialog::GeneralSettingsDialog(QWidget* parent) : QDialog(parent) 
     form->addRow(softwareCheck_);
     form->addRow(gpuCheck_);
 
+    auto* updateLayout = new QHBoxLayout();
+    auto* checkButton = new QPushButton("Check for updates", this);
+    updateLabel_ = new QLabel("Current version: " + QString(kCurrentVersion), this);
+    updateLayout->addWidget(checkButton);
+    updateLayout->addWidget(updateLabel_, 1);
+    connect(checkButton, &QPushButton::clicked, this,
+            &GeneralSettingsDialog::checkForUpdates);
+
     auto* buttons = new QDialogButtonBox(QDialogButtonBox::Ok | QDialogButtonBox::Cancel,
                                          this);
     connect(buttons, &QDialogButtonBox::accepted, this, &QDialog::accept);
@@ -94,6 +113,7 @@ GeneralSettingsDialog::GeneralSettingsDialog(QWidget* parent) : QDialog(parent) 
     auto* layout = new QVBoxLayout(this);
     layout->addWidget(new QLabel("General settings"));
     layout->addLayout(form);
+    layout->addLayout(updateLayout);
     layout->addWidget(buttons);
 }
 
@@ -108,6 +128,31 @@ AppSettings GeneralSettingsDialog::settings() const {
     out.softwareRendering = softwareCheck_->isChecked();
     out.preferGpu = gpuCheck_->isChecked();
     return out;
+}
+
+void GeneralSettingsDialog::checkForUpdates() {
+    updateLabel_->setText("Checking GitHub...");
+    auto* manager = new QNetworkAccessManager(this);
+    QNetworkRequest request{QUrl(kLatestReleaseUrl)};
+    request.setHeader(QNetworkRequest::UserAgentHeader, "photosphere-linux");
+    QNetworkReply* reply = manager->get(request);
+    connect(reply, &QNetworkReply::finished, this, [this, reply, manager]() {
+        reply->deleteLater();
+        manager->deleteLater();
+        if (reply->error() != QNetworkReply::NoError) {
+            updateLabel_->setText("Update check failed: " + reply->errorString());
+            return;
+        }
+        const QJsonObject object = QJsonDocument::fromJson(reply->readAll()).object();
+        const QString tag = object.value("tag_name").toString();
+        if (tag.isEmpty()) {
+            updateLabel_->setText("No release information found");
+        } else if (tag == QString(kCurrentVersion)) {
+            updateLabel_->setText("You are up to date (" + tag + ")");
+        } else {
+            updateLabel_->setText("New version available: " + tag);
+        }
+    });
 }
 
 } // namespace ps::gui

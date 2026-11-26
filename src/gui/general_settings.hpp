@@ -6,6 +6,7 @@
 class QCheckBox;
 class QComboBox;
 class QDoubleSpinBox;
+class QLabel;
 class QLineEdit;
 
 namespace ps::gui {
@@ -31,6 +32,9 @@ public:
 
     AppSettings settings() const;
 
+private slots:
+    void checkForUpdates();
+
 private:
     QComboBox* explorerCombo_ = nullptr;
     QLineEdit* commandEdit_ = nullptr;
@@ -39,6 +43,7 @@ private:
     QCheckBox* forceX11Check_ = nullptr;
     QCheckBox* softwareCheck_ = nullptr;
     QCheckBox* gpuCheck_ = nullptr;
+    QLabel* updateLabel_ = nullptr;
 };
 
 } // namespace ps::gui
