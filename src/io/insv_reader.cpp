@@ -212,9 +212,11 @@ double insvDuration(const std::string& path) {
 #endif
 }
 
-bool readInsvAtTimes(const std::string& path, const std::vector<double>& times,
-                     std::vector<LensFrame>& out, std::string& error) {
-    out.clear();
+namespace {
+bool decodeAtTimes(const std::string& path, const std::vector<double>& times,
+                   std::vector<LensFrame>* out,
+                   const InsvFrameCallback* callback, std::string& error) {
+    if (out) out->clear();
 #ifndef PS_HAVE_FFMPEG
     (void)path; (void)times;
     error = "built without libav: INSV input is disabled";
@@ -342,15 +344,29 @@ bool readInsvAtTimes(const std::string& path, const std::vector<double>& times,
         bool all = true;
         for (bool f : found) if (!f) all = false;
         if (!all) continue;
-        for (auto& f : picked) out.push_back(std::move(f));
+        if (callback && !(*callback)(picked)) break;
+        if (out)
+            for (auto& f : picked) out->push_back(std::move(f));
     }
     av_frame_free(&frame);
     av_frame_free(&scratch);
     av_packet_free(&packet);
     cleanup();
-    if (out.empty()) error = "no frames decoded at the requested timestamps";
-    return !out.empty();
+    if (out && out->empty()) error = "no frames decoded at the requested timestamps";
+    return out ? !out->empty() : true;
 #endif
+}
+} // namespace
+
+bool readInsvAtTimes(const std::string& path, const std::vector<double>& times,
+                     std::vector<LensFrame>& out, std::string& error) {
+    return decodeAtTimes(path, times, &out, nullptr, error);
+}
+
+bool streamInsvAtTimes(const std::string& path, const std::vector<double>& times,
+                       const InsvFrameCallback& callback, std::string& error) {
+    if (!callback) { error = "no frame callback"; return false; }
+    return decodeAtTimes(path, times, nullptr, &callback, error);
 }
 
 bool readInsv(const std::string& path, std::vector<LensFrame>& out,

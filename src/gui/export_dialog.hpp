@@ -3,6 +3,7 @@
 #include <QDialog>
 #include <QString>
 
+class QCheckBox;
 class QDoubleSpinBox;
 class QLineEdit;
 class QSpinBox;
@@ -16,6 +17,8 @@ struct ExportDialogOptions {
     double startTime = 0.0;
     double endTime = 0.0;
     QString output;
+    bool hevc = false;
+    bool spherical = true;
 };
 
 class ExportDialog : public QDialog {
@@ -37,6 +40,8 @@ private:
     QDoubleSpinBox* startSpin_ = nullptr;
     QDoubleSpinBox* endSpin_ = nullptr;
     QLineEdit* outputEdit_ = nullptr;
+    QCheckBox* hevcCheck_ = nullptr;
+    QCheckBox* sphericalCheck_ = nullptr;
     double sourceFps_ = 25.0;
 };
 

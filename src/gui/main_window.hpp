@@ -77,6 +77,7 @@ private:
     ViewerWidget* viewer_ = nullptr;
     cv::Mat panorama_;
     QThread* stitchThread_ = nullptr;
+    QThread* hdrThread_ = nullptr;
     QProgressDialog* stitchProgress_ = nullptr;
     QThread* exportThread_ = nullptr;
     QProgressDialog* exportProgress_ = nullptr;

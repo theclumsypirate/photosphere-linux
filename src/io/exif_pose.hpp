@@ -21,4 +21,7 @@ struct ExifPose {
 // original capture application. Returns false when the tag is missing.
 bool readExifPose(const std::string& path, ExifPose& out);
 
+// Exposure time in seconds and ISO speed from EXIF tags 0x829A and 0x8827.
+bool readExifExposure(const std::string& path, double& shutterSeconds, double& iso);
+
 } // namespace ps::io

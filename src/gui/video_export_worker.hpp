@@ -24,6 +24,8 @@ public:
         double endTime = 0.0; // 0 means end of file
         bool flipLenses = false;
         bool multiband = true;
+        bool hevc = false;
+        bool spherical = true;
     };
 
     explicit VideoExportWorker(QObject* parent = nullptr);

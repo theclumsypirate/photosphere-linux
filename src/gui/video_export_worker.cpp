@@ -41,6 +41,9 @@ void VideoExportWorker::run() {
     if (times.empty()) times.push_back(options_.startTime);
 
     io::Mp4Writer writer(options_.output, width, width / 2, options_.fps);
+    writer.setVideoQuality(18.0, 0);
+    writer.setHevc(options_.hevc);
+    writer.setSphericalMetadata(options_.spherical);
     const double videoEnd = options_.startTime +
                             static_cast<double>(times.size()) * options_.everySeconds;
     writer.setAudioSource(options_.input, options_.startTime,
@@ -52,22 +55,22 @@ void VideoExportWorker::run() {
     }
 
     int written = 0;
-    for (size_t i = 0; i < times.size(); ++i) {
-        if (cancelled()) break;
-        std::vector<LensFrame> frames;
-        if (!io::readInsvAtTimes(options_.input, std::vector<double>{times[i]},
-                                 frames, error)) continue;
-        if (frames.size() < 2 || frames[0].lens == frames[1].lens) continue;
+    const size_t total = times.size();
+    auto onFrames = [&](const std::vector<LensFrame>& frames) -> bool {
+        if (cancelled()) return false;
+        if (frames.size() < 2 || frames[0].lens == frames[1].lens) return true;
         std::string diagnostics;
         const Panorama pano = stitchDualFisheye({frames[0], frames[1]},
                                                 stitchOptions, diagnostics);
-        if (pano.equirect.empty()) continue;
-        if (!writer.write(pano.equirect, error)) break;
+        if (pano.equirect.empty()) return true;
+        if (!writer.write(pano.equirect, error)) return false;
         ++written;
-        if ((i % 2) == 0 || i + 1 == times.size())
-            emit progress(static_cast<int>(i + 1), static_cast<int>(times.size()),
-                          QString("Encoding frame %1 of %2").arg(i + 1).arg(times.size()));
-    }
+        if ((written % 2) == 1 || written == static_cast<int>(total))
+            emit progress(written, static_cast<int>(total),
+                          QString("Encoding frame %1 of %2").arg(written).arg(total));
+        return true;
+    };
+    io::streamInsvAtTimes(options_.input, times, onFrames, error);
     writer.finish();
     if (cancelled()) {
         emit finished(false, "Export cancelled");

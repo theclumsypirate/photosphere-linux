@@ -33,7 +33,7 @@ cv::Mat normalizeColor(const cv::Mat& color, const cv::Mat& weight) {
     return out;
 }
 
-cv::Mat reconstructPyramid(const std::vector<PyramidLevel>& levels) {
+cv::Mat reconstructPyramid(const std::vector<PyramidLevel>& levels, bool asFloat) {
     if (levels.empty()) return {};
     cv::Mat result = normalizeColor(levels.back().color, levels.back().weight);
     for (int level = static_cast<int>(levels.size()) - 2; level >= 0; --level) {
@@ -61,6 +61,7 @@ cv::Mat reconstructPyramid(const std::vector<PyramidLevel>& levels) {
         cv::divide(band, weight3, normalized);
         cv::add(pUp, normalized, result);
     }
+    if (asFloat) return result;
     cv::Mat out;
     result.convertTo(out, CV_8UC3);
     return out;

@@ -28,4 +28,10 @@ bool readStill(const std::string& path, std::vector<cv::Mat>& out,
 // point / radius values and the reported sensor dimensions.
 bool parseInsta360Calibration(const std::string& comment, CameraModel& model);
 
+// Develops a RAW file into linear 32-bit float RGB (0..1 range). Used by the
+// HDR bracket merge and by 32-bit EXR export.
+bool readStillLinear(const std::string& path, cv::Mat& outLinear,
+                     double& exposureSeconds, double& iso,
+                     std::string& error);
+
 } // namespace ps::io

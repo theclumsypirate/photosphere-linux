@@ -4,6 +4,8 @@
 #include "core/gpu_info.hpp"
 #include "gui/export_dialog.hpp"
 #include "gui/general_settings.hpp"
+#include "gui/hdr_export_worker.hpp"
+#include "gui/save_format_dialog.hpp"
 #include "gui/stitch_worker.hpp"
 #include "gui/video_export_worker.hpp"
 #include "core/little_planet.hpp"
@@ -697,6 +699,8 @@ void MainWindow::renderVideo() {
     if (flipCombo_->currentIndex() == 1) options.flipLenses = true;
     if (flipCombo_->currentIndex() == 2) options.flipLenses = false;
     options.multiband = multibandCheck_->isChecked();
+    options.hevc = dialogOptions.hevc;
+    options.spherical = dialogOptions.spherical;
 
     exportCancel_ = false;
     exportThread_ = new QThread(this);
@@ -799,11 +803,57 @@ void MainWindow::saveSnapshot() {
 
 void MainWindow::savePanorama() {
     if (panorama_.empty()) { QMessageBox::warning(this, "Nothing to save", "Stitch first."); return; }
-    const QString path = QFileDialog::getSaveFileName(this, "Save panorama", lastDir(), "JPEG (*.jpg)");
+    SaveFormatDialog formatDialog(this);
+    if (formatDialog.exec() != QDialog::Accepted) return;
+    const bool exr = formatDialog.format() == SaveFormat::Exr;
+    const QString path = QFileDialog::getSaveFileName(
+        this, exr ? "Save HDR panorama" : "Save panorama", lastDir(),
+        exr ? "OpenEXR (*.exr)" : "JPEG (*.jpg)");
     if (path.isEmpty()) return;
-    QString saveError;
-    if (saveImageFile(path, panorama_, ".jpg", saveError)) setStatus("Saved " + path);
-    else QMessageBox::critical(this, "Save failed", saveError);
+    if (!exr) {
+        QString saveError;
+        if (saveImageFile(path, panorama_, ".jpg", saveError)) setStatus("Saved " + path);
+        else QMessageBox::critical(this, "Save failed", saveError);
+        return;
+    }
+    std::vector<std::string> rawPaths;
+    for (const auto& pathString : inputPaths())
+        if (pathString.size() > 4 && pathString.substr(pathString.size() - 4) == ".dng")
+            rawPaths.push_back(pathString);
+    if (rawPaths.empty()) {
+        QMessageBox::warning(this, "No RAW input",
+                             "Add the bracketed DNG files before saving EXR.");
+        return;
+    }
+    if (hdrThread_) { QMessageBox::information(this, "Export", "HDR export is running."); return; }
+
+    HdrExportWorker::Options options;
+    options.paths = rawPaths;
+    options.output = path.toStdString();
+    options.stitch.width = std::min(4096, panorama_.cols);
+    options.stitch.fisheyeFovDegrees = fovSpin_->value();
+    options.stitch.flipLenses = autoFlipForAll(rawPaths);
+    if (flipCombo_->currentIndex() == 1) options.stitch.flipLenses = true;
+    if (flipCombo_->currentIndex() == 2) options.stitch.flipLenses = false;
+
+    hdrThread_ = new QThread(this);
+    auto* worker = new HdrExportWorker();
+    worker->moveToThread(hdrThread_);
+    worker->setOptions(options);
+    connect(hdrThread_, &QThread::started, worker, &HdrExportWorker::run);
+    connect(worker, &HdrExportWorker::finished, this,
+            [this](bool ok, const QString& message) {
+                setStatus(message);
+                if (!ok) QMessageBox::warning(this, "HDR export failed", message);
+                hdrThread_->quit();
+            });
+    connect(hdrThread_, &QThread::finished, worker, &QObject::deleteLater);
+    connect(hdrThread_, &QThread::finished, this, [this]() {
+        hdrThread_->deleteLater();
+        hdrThread_ = nullptr;
+    });
+    setStatus("Merging HDR bracket...");
+    hdrThread_->start();
 }
 
 void MainWindow::saveLittlePlanet() {

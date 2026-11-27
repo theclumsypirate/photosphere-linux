@@ -38,6 +38,31 @@ size_t typeSize(uint16_t type) {
     }
 }
 
+void scanExposureTags(const std::vector<uint8_t>& tiff, size_t base,
+                      uint32_t ifd, bool le, double& shutter, double& iso) {
+    if (static_cast<size_t>(ifd) + 2 > tiff.size()) return;
+    const uint16_t count = readU16(tiff, base + ifd, le);
+    for (uint16_t i = 0; i < count; ++i) {
+        const size_t entry = base + ifd + 2 + static_cast<size_t>(i) * 12;
+        if (entry + 12 > tiff.size()) break;
+        const uint16_t tag = readU16(tiff, entry, le);
+        const uint16_t type = readU16(tiff, entry + 2, le);
+        const uint32_t n = readU32(tiff, entry + 4, le);
+        const size_t bytes = static_cast<size_t>(n) * typeSize(type);
+        size_t valuePos = entry + 8;
+        if (bytes > 4) valuePos = base + readU32(tiff, entry + 8, le);
+        if (valuePos + 8 > tiff.size()) continue;
+        if (tag == 0x829A && type == 5) {
+            const uint32_t a = readU32(tiff, valuePos, le);
+            const uint32_t b = readU32(tiff, valuePos + 4, le);
+            if (b) shutter = static_cast<double>(a) / b;
+        } else if (tag == 0x8827) {
+            if (type == 3) iso = readU16(tiff, valuePos, le);
+            else if (type == 4) iso = readU32(tiff, valuePos, le);
+        }
+    }
+}
+
 // Returns the UserComment text from an Exif TIFF block, or an empty string.
 std::string findUserComment(const std::vector<uint8_t>& tiff, size_t base, bool le) {
     if (base + 8 > tiff.size() || readU16(tiff, base + 2, le) != 42) return {};
@@ -133,6 +158,67 @@ bool readExifPose(const std::string& path, ExifPose& out) {
                 }
                 out.valid = true;
                 return true;
+            }
+        }
+        pos += 2 + length;
+    }
+    return false;
+}
+
+bool readExifExposure(const std::string& path, double& shutterSeconds,
+                      double& iso) {
+    shutterSeconds = 0.0;
+    iso = 0.0;
+    std::ifstream in(path, std::ios::binary);
+    if (!in) return false;
+    std::vector<uint8_t> data((std::istreambuf_iterator<char>(in)),
+                              std::istreambuf_iterator<char>());
+    const bool isTiff = data.size() >= 4 &&
+        ((data[0] == 'I' && data[1] == 'I' && data[2] == 42) ||
+         (data[0] == 'M' && data[1] == 'M' && data[3] == 42));
+    if (isTiff) {
+        const bool le = data[0] == 'I';
+        const uint32_t ifd0 = readU32(data, 4, le);
+        scanExposureTags(data, 0, ifd0, le, shutterSeconds, iso);
+        const uint16_t count = readU16(data, ifd0, le);
+        for (uint16_t i = 0; i < count; ++i) {
+            const size_t e = ifd0 + 2 + static_cast<size_t>(i) * 12;
+            if (e + 12 > data.size()) break;
+            if (readU16(data, e, le) == 0x8769)
+                scanExposureTags(data, 0, readU32(data, e + 8, le), le,
+                                 shutterSeconds, iso);
+        }
+        return shutterSeconds > 0.0;
+    }
+    if (data.size() < 4 || data[0] != 0xFF || data[1] != 0xD8) return false;
+    size_t pos = 2;
+    while (pos + 4 <= data.size()) {
+        if (data[pos] != 0xFF) { ++pos; continue; }
+        const uint8_t marker = data[pos + 1];
+        if (marker == 0xD9 || marker == 0xDA) break;
+        if (marker == 0xFF) { ++pos; continue; }
+        const size_t length = (static_cast<size_t>(data[pos + 2]) << 8) | data[pos + 3];
+        if (length < 2 || pos + 2 + length > data.size()) break;
+        if (marker == 0xE1 && length > 8) {
+            const size_t start = pos + 4;
+            const std::string id(reinterpret_cast<const char*>(data.data() + start), 6);
+            if (id == std::string("Exif\0\0", 6)) {
+                const size_t base = start + 6;
+                const bool le = data[base] == 'I' && data[base + 1] == 'I';
+                if (base + 8 > data.size() || readU16(data, base + 2, le) != 42)
+                    return false;
+                const uint32_t ifd0 = readU32(data, base + 4, le);
+                scanExposureTags(data, base, ifd0, le, shutterSeconds, iso);
+                const uint16_t count = readU16(data, base + ifd0, le);
+                for (uint16_t i = 0; i < count; ++i) {
+                    const size_t e = base + ifd0 + 2 + static_cast<size_t>(i) * 12;
+                    if (e + 12 > data.size()) break;
+                    if (readU16(data, e, le) == 0x8769) {
+                        const uint32_t exifIfd = readU32(data, e + 8, le);
+                        scanExposureTags(data, base, exifIfd, le, shutterSeconds, iso);
+                    }
+                }
+                return shutterSeconds > 0.0;
             }
         }
         pos += 2 + length;

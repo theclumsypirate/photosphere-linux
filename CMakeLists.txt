@@ -41,6 +41,7 @@ target_link_libraries(ps_core PUBLIC ${OpenCV_LIBS} Threads::Threads)
 # I/O: image readers, INSV demux, frame store.
 add_library(ps_io
   src/io/exif_pose.cpp
+  src/io/hdr_export.cpp
   src/io/image_io.cpp
   src/io/insv_reader.cpp
   src/io/frame_store.cpp
@@ -102,6 +103,8 @@ if(PS_BUILD_GUI)
     src/gui/viewer_widget.cpp
     src/gui/export_dialog.cpp
     src/gui/general_settings.cpp
+    src/gui/hdr_export_worker.cpp
+    src/gui/save_format_dialog.cpp
     src/gui/stitch_worker.cpp
     src/gui/video_export_worker.cpp
     src/gui/resources.qrc)

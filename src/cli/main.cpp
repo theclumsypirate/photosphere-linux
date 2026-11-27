@@ -4,14 +4,17 @@
 #include "core/stitcher.hpp"
 #include "io/exif_pose.hpp"
 #include "io/frame_store.hpp"
+#include "io/hdr_export.hpp"
 #include "io/image_io.hpp"
 #include "io/insv_reader.hpp"
 #include "io/video_writer.hpp"
 
 #include <opencv2/imgcodecs.hpp>
+#include <opencv2/photo.hpp>
 
 #include <algorithm>
 #include <cmath>
+#include <cstdlib>
 #include <filesystem>
 #include <iostream>
 #include <string>
@@ -35,6 +38,7 @@ void usage() {
               << "  extract   -i VIDEO.insv -o DIR [--max N] [--step N]\n"
               << "  auto      -o DIR INPUT... [-w WIDTH] [--fov DEG]\n"
               << "  video     -i VIDEO.insv -o OUT.mp4 [--every SEC] [-w WIDTH]\n"
+              << "            [--crf N] [--bitrate BPS] [--hevc] [--no-spherical]\n"
               << "  batch     -i VIDEO.insv -o PREFIX [--every SEC] [--count N]\n"
               << "            [-w WIDTH] [--fov DEG] [--flip|--no-flip]\n"
               << "  littleplanet -i PANO.jpg -o OUT.png [--size N] [--fov DEG]\n"
@@ -250,6 +254,10 @@ bool cmdVideo(int argc, char** argv) {
 
     std::string error;
     ps::io::Mp4Writer writer(output, width, width / 2, fps);
+    writer.setVideoQuality(numberOption(argc, argv, "--crf", 18.0),
+                           static_cast<int64_t>(numberOption(argc, argv, "--bitrate", 0)));
+    writer.setHevc(hasFlag(argc, argv, "--hevc"));
+    writer.setSphericalMetadata(!hasFlag(argc, argv, "--no-spherical"));
     writer.setAudioSource(input, 0.0,
                           static_cast<double>(times.size()) / fps);
     if (!writer.open(error)) { std::cerr << "video: " << error << "\n"; return false; }
@@ -257,25 +265,54 @@ bool cmdVideo(int argc, char** argv) {
               << " equirectangular frames, " << width << "x" << width / 2 << " @ " << fps
               << " fps\n";
     int written = 0;
-    for (size_t i = 0; i < times.size(); ++i) {
-        std::vector<ps::LensFrame> frames;
-        if (!ps::io::readInsvAtTimes(input, {times[i]}, frames, error)) continue;
-        if (frames.size() < 2 || frames[0].lens == frames[1].lens) continue;
+    auto onFrames = [&](const std::vector<ps::LensFrame>& frames) -> bool {
+        if (frames.size() < 2 || frames[0].lens == frames[1].lens) return true;
         std::string diagnostics;
         const ps::Panorama pano = ps::stitchDualFisheye({frames[0], frames[1]},
                                                         options, diagnostics);
-        if (pano.equirect.empty()) continue;
+        if (pano.equirect.empty()) return true;
         if (!writer.write(pano.equirect, error)) {
             std::cerr << "video: " << error << "\n";
             return false;
         }
         ++written;
         if ((written % 5) == 0)
-            std::cout << "t=" << times[i] << " s, " << written << " frames encoded\n";
-    }
+            std::cout << "t=" << frames[0].timestamp << " s, " << written
+                      << " frames encoded\n";
+        return true;
+    };
+    ps::io::streamInsvAtTimes(input, times, onFrames, error);
     writer.finish();
     std::cout << "Wrote " << output << " with " << written << " panorama frames\n";
     return written > 0;
+}
+
+bool cmdHdr(int argc, char** argv) {
+    const std::string output = optionValue(argc, argv, "-o");
+    std::vector<std::string> files;
+    for (int i = 2; i < argc; ++i) {
+        const std::string a = argv[i];
+        if (a == "-o" || a == "-w" || a == "--fov" || a == "--ev") { ++i; continue; }
+        files.push_back(a);
+    }
+    if (output.empty() || files.empty()) {
+        std::cerr << "hdr: need -o OUT.exr and at least one RAW input\n";
+        return false;
+    }
+    applyRawOptions(argc, argv);
+    ps::StitchOptions options;
+    options.width = static_cast<int>(numberOption(argc, argv, "-w", 4096));
+    options.fisheyeFovDegrees = numberOption(argc, argv, "--fov", 195.0);
+    options.flipLenses = autoFlipForAll(files);
+    if (hasFlag(argc, argv, "--no-flip")) options.flipLenses = false;
+    if (hasFlag(argc, argv, "--flip")) options.flipLenses = true;
+    std::string error;
+    if (!ps::io::exportHdrPanorama(files, options, output, error)) {
+        std::cerr << "hdr: " << error << "\n";
+        return false;
+    }
+    std::cout << "Wrote " << output << " from " << files.size() << " bracketed DNGs\n";
+    return true;
 }
 
 bool cmdAuto(int argc, char** argv) {
@@ -434,6 +471,7 @@ bool cmdGpano(int argc, char** argv) {
 } // namespace
 
 int main(int argc, char** argv) {
+    setenv("OPENCV_IO_ENABLE_OPENEXR", "1", 1);
     if (argc < 2) { usage(); return 1; }
     const std::string command = argv[1];
     if (command == "gpu") {
@@ -446,6 +484,7 @@ int main(int argc, char** argv) {
     if (command == "batch") return cmdBatch(argc, argv) ? 0 : 2;
     if (command == "auto") return cmdAuto(argc, argv) ? 0 : 2;
     if (command == "video") return cmdVideo(argc, argv) ? 0 : 2;
+    if (command == "hdr") return cmdHdr(argc, argv) ? 0 : 2;
     if (command == "littleplanet") return cmdLittlePlanet(argc, argv) ? 0 : 2;
     if (command == "gpano") return cmdGpano(argc, argv) ? 0 : 2;
     if (command == "--help" || command == "-h") { usage(); return 0; }

@@ -1,5 +1,6 @@
 #pragma once
 
+#include <functional>
 #include <string>
 #include <vector>
 
@@ -28,5 +29,12 @@ double insvDuration(const std::string& path);
 // instead of walking the whole file. Much faster for sampling a long video.
 bool readInsvAtTimes(const std::string& path, const std::vector<double>& times,
                      std::vector<LensFrame>& out, std::string& error);
+
+// Single-pass streaming variant. Frames are handed to the callback as soon as
+// a lens pair is ready, so long videos never accumulate in memory. Returning
+// false from the callback stops the decode.
+using InsvFrameCallback = std::function<bool(const std::vector<LensFrame>&)>;
+bool streamInsvAtTimes(const std::string& path, const std::vector<double>& times,
+                       const InsvFrameCallback& callback, std::string& error);
 
 } // namespace ps::io

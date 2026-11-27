@@ -1,3 +1,4 @@
+#include <cstdio>
 #include "core/stitcher.hpp"
 
 #include "core/blender.hpp"
@@ -12,6 +13,8 @@
 
 #include <algorithm>
 #include <cmath>
+#include <map>
+#include <tuple>
 #include <utility>
 #include <vector>
 
@@ -25,6 +28,16 @@ struct LensBasis {
     Vec3 right;
     Vec3 up;
 };
+
+struct WarpMaps {
+    cv::Mat mapX;
+    cv::Mat mapY;
+    cv::Mat weights;
+};
+
+// Dewarp coordinates depend only on geometry, not on image content. Cache them
+// so an export that stitches thousands of frames computes them once.
+thread_local std::map<std::tuple<int, int, int, int, bool, int>, WarpMaps> warpCache;
 
 // The two back-to-back fisheye lenses of an Insta360 style camera.
 LensBasis lensBasis(int lens) {
@@ -56,38 +69,49 @@ void accumulateFisheyeLevel(const cv::Mat& image, int lens, double fovDegrees,
         basis.up = rotation::scale3(basis.up, -1.0);
     }
 
-    cv::Mat mapX(h, w, CV_32FC1, cv::Scalar(-1.f));
-    cv::Mat mapY(h, w, CV_32FC1, cv::Scalar(-1.f));
-    cv::Mat weights(h, w, CV_32FC1, cv::Scalar(0.f));
-    std::vector<double> dX(w), dY(w), dZ(w);
-    for (int col = 0; col < w; ++col) {
-        const double lon = equirect::longitudeDegrees(col, w) * kPi / 180.0;
-        dX[col] = std::sin(lon);
-        dY[col] = std::cos(lon);
-    }
-    for (int row = 0; row < h; ++row) {
-        const double lat = equirect::latitudeDegrees(row, h) * kPi / 180.0;
-        const double cl = std::cos(lat), sl = std::sin(lat);
-        auto* mx = mapX.ptr<float>(row);
-        auto* my = mapY.ptr<float>(row);
-        auto* ww = weights.ptr<float>(row);
+    const auto key = std::make_tuple(image.cols, image.rows, lens,
+                                     static_cast<int>(std::lround(fovDegrees * 100.0)),
+                                     flipLenses, divisor);
+    auto cached = warpCache.find(key);
+    if (cached == warpCache.end()) {
+        WarpMaps maps;
+        maps.mapX = cv::Mat(h, w, CV_32FC1, cv::Scalar(-1.f));
+        maps.mapY = cv::Mat(h, w, CV_32FC1, cv::Scalar(-1.f));
+        maps.weights = cv::Mat(h, w, CV_32FC1, cv::Scalar(0.f));
+        std::vector<double> dX(w), dY(w);
         for (int col = 0; col < w; ++col) {
-            const Vec3 d{cl * dX[col], cl * dY[col], sl};
-            const double cosTheta = std::clamp(rotation::dot3(d, basis.forward), -1.0, 1.0);
-            const double theta = std::acos(cosTheta);
-            if (theta > thetaMax) continue;
-            const double ax = rotation::dot3(d, basis.right);
-            const double ay = rotation::dot3(d, basis.up);
-            const double phi = std::atan2(ax, ay);
-            const double r = radius * theta / thetaMax;
-            const double sx = cx + r * std::sin(phi);
-            const double sy = cy - r * std::cos(phi);
-            if (sx < 0 || sy < 0 || sx >= source.cols || sy >= source.rows) continue;
-            mx[col] = static_cast<float>(sx);
-            my[col] = static_cast<float>(sy);
-            ww[col] = static_cast<float>(featherWeight(sx, sy, cx, cy));
+            const double lon = equirect::longitudeDegrees(col, w) * kPi / 180.0;
+            dX[col] = std::sin(lon);
+            dY[col] = std::cos(lon);
         }
+        for (int row = 0; row < h; ++row) {
+            const double lat = equirect::latitudeDegrees(row, h) * kPi / 180.0;
+            const double cl = std::cos(lat), sl = std::sin(lat);
+            auto* mx = maps.mapX.ptr<float>(row);
+            auto* my = maps.mapY.ptr<float>(row);
+            auto* ww = maps.weights.ptr<float>(row);
+            for (int col = 0; col < w; ++col) {
+                const Vec3 d{cl * dX[col], cl * dY[col], sl};
+                const double cosTheta = std::clamp(rotation::dot3(d, basis.forward), -1.0, 1.0);
+                const double theta = std::acos(cosTheta);
+                if (theta > thetaMax) continue;
+                const double ax = rotation::dot3(d, basis.right);
+                const double ay = rotation::dot3(d, basis.up);
+                const double phi = std::atan2(ax, ay);
+                const double r = radius * theta / thetaMax;
+                const double sx = cx + r * std::sin(phi);
+                const double sy = cy - r * std::cos(phi);
+                if (sx < 0 || sy < 0 || sx >= source.cols || sy >= source.rows) continue;
+                mx[col] = static_cast<float>(sx);
+                my[col] = static_cast<float>(sy);
+                ww[col] = static_cast<float>(featherWeight(sx, sy, cx, cy));
+            }
+        }
+        cached = warpCache.emplace(key, std::move(maps)).first;
     }
+    const cv::Mat& mapX = cached->second.mapX;
+    const cv::Mat& mapY = cached->second.mapY;
+    const cv::Mat& weights = cached->second.weights;
     if (cv::countNonZero(weights) == 0) return;
     cv::Mat warped;
     cv::remap(source, warped, mapX, mapY, cv::INTER_LINEAR, cv::BORDER_CONSTANT,
@@ -134,7 +158,9 @@ Panorama stitchDualFisheye(const std::vector<LensFrame>& pair,
         if (options.onProgress) options.onProgress(level + 1, levels);
     }
     out.equirect = levels == 1 ? normalizeColor(pyramid[0].color, pyramid[0].weight)
-                               : reconstructPyramid(pyramid);
+                               : reconstructPyramid(pyramid, options.linearOutput);
+    if (!options.linearOutput && levels == 1 && out.equirect.depth() != CV_8U)
+        out.equirect.convertTo(out.equirect, CV_8UC3);
     out.seamMask = pyramid.front().weight.clone();
     const int covered = cv::countNonZero(out.seamMask);
     diagnostics += "dual fisheye, fov=" + std::to_string(options.fisheyeFovDegrees) +

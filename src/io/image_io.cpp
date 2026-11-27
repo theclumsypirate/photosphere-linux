@@ -1,5 +1,7 @@
 #include "io/image_io.hpp"
 
+#include "io/exif_pose.hpp"
+
 #include <opencv2/imgcodecs.hpp>
 #include <opencv2/imgproc.hpp>
 
@@ -200,6 +202,55 @@ bool readRawTiff(const std::string& path, RawInfo& info, std::string& error) {
 void setRawOptions(const RawOptions& options) { g_rawOptions = options; }
 
 RawOptions rawOptions() { return g_rawOptions; }
+
+bool readStillLinear(const std::string& path, cv::Mat& outLinear,
+                     double& exposureSeconds, double& iso, std::string& error) {
+    exposureSeconds = 0.0;
+    iso = 0.0;
+#ifdef PS_HAVE_LIBRAW
+    LibRaw raw;
+    int rc = raw.open_file(path.c_str());
+    if (rc != LIBRAW_SUCCESS) { error = LibRaw::strerror(rc); return false; }
+    rc = raw.unpack();
+    if (rc != LIBRAW_SUCCESS) { error = LibRaw::strerror(rc); return false; }
+    exposureSeconds = static_cast<double>(raw.imgdata.other.shutter);
+    iso = static_cast<double>(raw.imgdata.other.iso_speed);
+    if (exposureSeconds <= 0.0 || iso <= 0.0)
+        readExifExposure(path, exposureSeconds, iso);
+    auto& p = raw.imgdata.params;
+    p.output_bps = 16;
+    p.output_color = 1;
+    p.use_camera_wb = 1;
+    p.no_auto_bright = 1;
+    p.gamm[0] = 1.0;
+    p.gamm[1] = 1.0;
+    p.bright = static_cast<float>(std::pow(2.0, g_rawOptions.exposureEV));
+    rc = raw.dcraw_process();
+    if (rc != LIBRAW_SUCCESS) { error = LibRaw::strerror(rc); return false; }
+    libraw_processed_image_t* image = raw.dcraw_make_mem_image(&rc);
+    if (!image || rc != LIBRAW_SUCCESS || image->bits != 16 || image->colors != 3) {
+        error = "RAW linear development failed";
+        LibRaw::dcraw_clear_mem(image);
+        return false;
+    }
+    const int count = image->width * image->height;
+    cv::Mat bgr16(image->height, image->width, CV_16UC3);
+    const uint16_t* src = reinterpret_cast<const uint16_t*>(image->data);
+    for (int i = 0; i < count; ++i) {
+        auto* dst = reinterpret_cast<uint16_t*>(bgr16.data) + i * 3;
+        dst[0] = src[i * 3 + 2]; // LibRaw gives RGB, OpenCV expects BGR
+        dst[1] = src[i * 3 + 1];
+        dst[2] = src[i * 3];
+    }
+    LibRaw::dcraw_clear_mem(image);
+    bgr16.convertTo(outLinear, CV_32FC3, 1.0 / 65535.0);
+    return true;
+#else
+    (void)path; (void)outLinear; (void)exposureSeconds; (void)iso;
+    error = "built without LibRaw: linear RAW decoding unavailable";
+    return false;
+#endif
+}
 
 bool parseInsta360Calibration(const std::string& comment, CameraModel& model) {
     const size_t p = comment.find("INSTA360");

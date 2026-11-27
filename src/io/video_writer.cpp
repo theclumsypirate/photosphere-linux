@@ -6,6 +6,7 @@ extern "C" {
 #include <libavcodec/avcodec.h>
 #include <libavformat/avformat.h>
 #include <libavutil/imgutils.h>
+#include <libavutil/spherical.h>
 #include <libswscale/swscale.h>
 }
 
@@ -30,6 +31,11 @@ struct Mp4Writer::Impl {
     AVFrame* frame = nullptr;
     AVPacket* packet = nullptr;
     int64_t pts = 0;
+    double crf = 18.0;
+    int64_t bitrate = 0;
+    bool spherical = true;
+    bool sphericalWritten = false;
+    bool hevc = false;
     bool opened = false;
     bool finished = false;
 
@@ -48,6 +54,15 @@ void Mp4Writer::setPreferHardwareEncoder(bool enabled) {
     g_preferHardwareEncoder = enabled;
 }
 
+void Mp4Writer::setVideoQuality(double crf, int64_t bitrate) {
+    impl_->crf = std::clamp(crf, 0.0, 51.0);
+    impl_->bitrate = bitrate;
+}
+
+void Mp4Writer::setSphericalMetadata(bool enabled) { impl_->spherical = enabled; }
+
+void Mp4Writer::setHevc(bool enabled) { impl_->hevc = enabled; }
+
 void Mp4Writer::setAudioSource(const std::string& inputPath, double startTime,
                                double endTime) {
     impl_->audioPath = inputPath;
@@ -58,7 +73,7 @@ void Mp4Writer::setAudioSource(const std::string& inputPath, double startTime,
 
 Mp4Writer::Mp4Writer(const std::string& path, int width, int height, double fps)
     : impl_(new Impl{path, width, height, fps, nullptr, nullptr, nullptr, nullptr,
-                     nullptr, nullptr, 0, false, false}) {}
+                     nullptr, nullptr, 0, 18.0, 0, true, false, false, false, false}) {}
 
 Mp4Writer::~Mp4Writer() {
     finish();
@@ -73,24 +88,31 @@ bool Mp4Writer::open(std::string& error) {
     int rc = avformat_alloc_output_context2(&impl_->format, nullptr, "mp4",
                                             impl_->path.c_str());
     if (rc < 0 || !impl_->format) { error = "cannot create MP4 output"; return false; }
+    // The muxer writes the sv3d box only when unofficial ISO extensions are
+    // allowed. Spatial Media metadata is such an extension.
+    impl_->format->strict_std_compliance = -1;
+    const AVCodecID preferredId = impl_->hevc ? AV_CODEC_ID_HEVC : AV_CODEC_ID_H264;
     std::vector<const AVCodec*> candidates;
     if (g_preferHardwareEncoder) {
-        if (const AVCodec* nvenc = avcodec_find_encoder_by_name("h264_nvenc"))
-            candidates.push_back(nvenc);
+        const char* names[] = {impl_->hevc ? "hevc_nvenc" : "h264_nvenc",
+                               impl_->hevc ? "hevc_qsv" : "h264_qsv"};
+        for (const char* name : names)
+            if (const AVCodec* hardware = avcodec_find_encoder_by_name(name))
+                candidates.push_back(hardware);
     }
-    if (const AVCodec* h264 = avcodec_find_encoder(AV_CODEC_ID_H264))
-        candidates.push_back(h264);
-    if (const AVCodec* mpeg4 = avcodec_find_encoder(AV_CODEC_ID_MPEG4))
-        candidates.push_back(mpeg4);
+    if (const AVCodec* software = avcodec_find_encoder(preferredId))
+        candidates.push_back(software);
+    if (!impl_->hevc)
+        if (const AVCodec* mpeg4 = avcodec_find_encoder(AV_CODEC_ID_MPEG4))
+            candidates.push_back(mpeg4);
     if (candidates.empty()) { error = "no available video encoder"; return false; }
 
-    const AVCodec* codec = nullptr;
     std::string openError;
     for (const AVCodec* candidate : candidates) {
         AVCodecContext* context = avcodec_alloc_context3(candidate);
         if (!context) continue;
         context->codec_id = candidate->id;
-        context->bit_rate = 12'000'000;
+        context->bit_rate = impl_->bitrate;
         context->width = impl_->width;
         context->height = impl_->height;
         const AVRational rate = av_d2q(impl_->fps, 1000);
@@ -105,17 +127,17 @@ bool Mp4Writer::open(std::string& error) {
                 if (*p == context->pix_fmt) supported = true;
             if (!supported) context->pix_fmt = candidate->pix_fmts[0];
         }
-        if (avcodec_open2(context, candidate, nullptr) >= 0) {
-            impl_->encoder = context;
-            codec = candidate;
-            break;
-        }
+        AVDictionary* options = nullptr;
+        if (impl_->bitrate <= 0)
+            av_dict_set(&options, "crf", std::to_string(impl_->crf).c_str(), 0);
+        const int opened = avcodec_open2(context, candidate, &options);
+        av_dict_free(&options);
+        if (opened >= 0) { impl_->encoder = context; break; }
         openError = "cannot open video encoder";
         avcodec_free_context(&context);
     }
     if (!impl_->encoder) { error = openError.empty() ? "cannot open video encoder" : openError; return false; }
     auto* ctx = impl_->encoder;
-    (void)codec;
     impl_->stream = avformat_new_stream(impl_->format, nullptr);
     if (!impl_->stream) { error = "cannot create video stream"; return false; }
     if (avcodec_parameters_from_context(impl_->stream->codecpar, ctx) < 0) {
@@ -124,7 +146,18 @@ bool Mp4Writer::open(std::string& error) {
     }
     impl_->stream->time_base = ctx->time_base;
     impl_->stream->avg_frame_rate = ctx->framerate;
-
+    if (impl_->spherical) {
+        auto* mapping = static_cast<AVSphericalMapping*>(
+            av_mallocz(sizeof(AVSphericalMapping)));
+        if (mapping) {
+            mapping->projection = AV_SPHERICAL_EQUIRECTANGULAR;
+            av_packet_side_data_add(&impl_->stream->codecpar->coded_side_data,
+                                    &impl_->stream->codecpar->nb_coded_side_data,
+                                    AV_PKT_DATA_SPHERICAL,
+                                    reinterpret_cast<uint8_t*>(mapping),
+                                    sizeof(AVSphericalMapping), 0);
+        }
+    }
     // Copy the source audio track. Packets are buffered so we can trim the
     // selected time range and interleave them with the encoded video frames.
     if (impl_->hasAudioSource &&
@@ -243,6 +276,17 @@ bool Mp4Writer::write(const cv::Mat& bgr, std::string& error) {
                              impl_->stream->time_base);
         impl_->packet->duration = av_rescale_q(1, impl_->encoder->time_base,
                                                impl_->stream->time_base);
+        if (impl_->spherical && !impl_->sphericalWritten) {
+            auto* mapping = static_cast<AVSphericalMapping*>(
+                av_mallocz(sizeof(AVSphericalMapping)));
+            if (mapping) {
+                mapping->projection = AV_SPHERICAL_EQUIRECTANGULAR;
+                av_packet_add_side_data(impl_->packet, AV_PKT_DATA_SPHERICAL,
+                                        reinterpret_cast<uint8_t*>(mapping),
+                                        sizeof(AVSphericalMapping));
+                impl_->sphericalWritten = true;
+            }
+        }
         impl_->packet->stream_index = impl_->stream->index;
         av_interleaved_write_frame(impl_->format, impl_->packet);
         av_packet_unref(impl_->packet);
@@ -287,6 +331,9 @@ namespace ps::io {
 struct Mp4Writer::Impl {};
 
 void Mp4Writer::setPreferHardwareEncoder(bool) {}
+void Mp4Writer::setVideoQuality(double, int64_t) {}
+void Mp4Writer::setSphericalMetadata(bool) {}
+void Mp4Writer::setHevc(bool) {}
 void Mp4Writer::setAudioSource(const std::string&, double, double) {}
 void Mp4Writer::pumpAudio(double, bool) {}
 

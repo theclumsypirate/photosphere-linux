@@ -23,6 +23,11 @@ public:
 
     static void setPreferHardwareEncoder(bool enabled);
 
+    // CRF for software encoders, bitrate in bits/s when greater than zero.
+    void setVideoQuality(double crf, int64_t bitrate);
+    void setSphericalMetadata(bool enabled);
+    void setHevc(bool enabled);
+
     Mp4Writer(const Mp4Writer&) = delete;
     Mp4Writer& operator=(const Mp4Writer&) = delete;
 

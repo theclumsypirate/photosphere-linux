@@ -2,6 +2,7 @@
 
 #include <algorithm>
 
+#include <QCheckBox>
 #include <QDialogButtonBox>
 #include <QDoubleSpinBox>
 #include <QFileDialog>
@@ -48,6 +49,10 @@ ExportDialog::ExportDialog(double durationSeconds, double sourceFps,
     endSpin_->setSuffix(" s (0 = end of file)");
     endSpin_->setValue(0.0);
 
+    hevcCheck_ = new QCheckBox("H.265 / HEVC", this);
+    sphericalCheck_ = new QCheckBox("360 degree metadata", this);
+    sphericalCheck_->setChecked(true);
+
     outputEdit_ = new QLineEdit(defaultOutput, this);
     outputEdit_->setReadOnly(true);
     auto* chooseButton = new QPushButton("Choose output file", this);
@@ -59,6 +64,8 @@ ExportDialog::ExportDialog(double durationSeconds, double sourceFps,
     form->addRow(new QLabel("Export frame rate"), fpsSpin_);
     form->addRow(new QLabel("Start at"), startSpin_);
     form->addRow(new QLabel("End at"), endSpin_);
+    form->addRow(hevcCheck_);
+    form->addRow(sphericalCheck_);
     form->addRow(new QLabel("Output file"), outputEdit_);
     form->addRow(chooseButton);
 
@@ -79,6 +86,8 @@ ExportDialogOptions ExportDialog::options() const {
     out.startTime = startSpin_->value();
     out.endTime = endSpin_->value();
     out.output = outputEdit_->text();
+    out.hevc = hevcCheck_->isChecked();
+    out.spherical = sphericalCheck_->isChecked();
     out.everySeconds = stepSpin_->value() / sourceFps_;
     out.fps = sourceFps_ / static_cast<double>(std::max(1, stepSpin_->value()));
     return out;

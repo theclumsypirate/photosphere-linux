@@ -21,6 +21,7 @@ std::pair<int, int> levelSize(int width, int height, int level);
 cv::Mat normalizeColor(const cv::Mat& color, const cv::Mat& weight);
 
 // levels[0] is finest, levels.back() is coarsest.
-cv::Mat reconstructPyramid(const std::vector<PyramidLevel>& levels);
+cv::Mat reconstructPyramid(const std::vector<PyramidLevel>& levels,
+                           bool asFloat = false);
 
 } // namespace ps

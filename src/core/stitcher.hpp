@@ -21,6 +21,7 @@ struct StitchOptions {
     bool dropOutliers = true;
     bool useLocalWarp = true;
     std::function<void(int, int)> onProgress;
+    bool linearOutput = false;
     int maxFrames = 0;
 };
 

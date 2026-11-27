@@ -26,6 +26,7 @@ void earlyMessageHandler(QtMsgType type, const QMessageLogContext&,
 } // namespace
 
 int main(int argc, char** argv) {
+    setenv("OPENCV_IO_ENABLE_OPENEXR", "1", 1);
     qInstallMessageHandler(earlyMessageHandler);
     const ps::gui::AppSettings settings = ps::gui::loadAppSettings();
     if (settings.forceX11) qputenv("QT_QPA_PLATFORM", "xcb");
