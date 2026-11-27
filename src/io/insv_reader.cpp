@@ -1,6 +1,9 @@
 #include "io/insv_reader.hpp"
 
+#include "core/eac.hpp"
 #include "core/gpu_info.hpp"
+
+#include <opencv2/imgproc.hpp>
 
 #include <algorithm>
 #include <fstream>
@@ -212,6 +215,36 @@ double insvDuration(const std::string& path) {
 #endif
 }
 
+bool isEacVideo(const std::string& path) {
+#ifndef PS_HAVE_FFMPEG
+    (void)path;
+    return false;
+#else
+    AVFormatContext* ctx = nullptr;
+    if (avformat_open_input(&ctx, path.c_str(), nullptr, nullptr) < 0) return false;
+    bool result = false;
+    if (avformat_find_stream_info(ctx, nullptr) >= 0) {
+        int videoCount = 0;
+        int width = 0, height = 0;
+        bool sameSize = true;
+        for (unsigned i = 0; i < ctx->nb_streams; ++i) {
+            AVCodecParameters* parameters = ctx->streams[i]->codecpar;
+            if (parameters->codec_type != AVMEDIA_TYPE_VIDEO) continue;
+            ++videoCount;
+            if (videoCount == 1) {
+                width = parameters->width;
+                height = parameters->height;
+            } else if (parameters->width != width || parameters->height != height) {
+                sameSize = false;
+            }
+        }
+        result = videoCount == 2 && sameSize && isEacFrameSize(width, height);
+    }
+    avformat_close_input(&ctx);
+    return result;
+#endif
+}
+
 namespace {
 bool decodeAtTimes(const std::string& path, const std::vector<double>& times,
                    std::vector<LensFrame>* out,
@@ -243,6 +276,9 @@ bool decodeAtTimes(const std::string& path, const std::vector<double>& times,
     }
     // One track means a side by side or stacked dual fisheye image. The loop
     // below splits each decoded frame into two lens images in that case.
+    const bool eac = streams.size() >= 2 &&
+        isEacFrameSize(ctx->streams[streams[0]]->codecpar->width,
+                       ctx->streams[streams[0]]->codecpar->height);
     const DecodeBackend backend = detectGpu().preferredDecodeBackend();
     std::vector<DecoderState> decoders(streams.size());
     for (size_t k = 0; k < streams.size(); ++k) {
@@ -344,6 +380,14 @@ bool decodeAtTimes(const std::string& path, const std::vector<double>& times,
         bool all = true;
         for (bool f : found) if (!f) all = false;
         if (!all) continue;
+        if (eac) {
+            cv::Mat combined;
+            cv::vconcat(picked[0].image, picked[1].image, combined);
+            cv::Mat equirect = eacToEquirect(combined, picked[0].image.cols);
+            picked[0].image = equirect;
+            picked[0].lens = -1;
+            picked[1] = LensFrame{};
+        }
         if (callback && !(*callback)(picked)) break;
         if (out)
             for (auto& f : picked) out->push_back(std::move(f));
@@ -399,6 +443,9 @@ bool readInsv(const std::string& path, std::vector<LensFrame>& out,
         return false;
     }
 
+    const bool eac = videoStreams.size() >= 2 &&
+        isEacFrameSize(ctx->streams[videoStreams[0]]->codecpar->width,
+                       ctx->streams[videoStreams[0]]->codecpar->height);
     const DecodeBackend backend = detectGpu().preferredDecodeBackend();
     std::vector<DecoderState> decoders(videoStreams.size());
     for (size_t k = 0; k < videoStreams.size(); ++k) {
@@ -494,9 +541,23 @@ bool readInsv(const std::string& path, std::vector<LensFrame>& out,
 
     size_t count = perLens.front().size();
     for (auto& v : perLens) count = std::min(count, v.size());
-    for (size_t i = 0; i < count; ++i)
-        for (size_t lens = 0; lens < perLens.size(); ++lens)
-            out.push_back(perLens[lens][i]);
+    if (eac) {
+        for (size_t i = 0; i < count; ++i) {
+            cv::Mat combined;
+            cv::vconcat(perLens[0][i].image, perLens[1][i].image, combined);
+            LensFrame frame;
+            frame.image = eacToEquirect(combined, perLens[0][i].image.cols);
+            frame.lens = -1;
+            frame.source = path;
+            frame.sequence = static_cast<int>(i);
+            frame.timestamp = perLens[0][i].timestamp;
+            out.push_back(std::move(frame));
+        }
+    } else {
+        for (size_t i = 0; i < count; ++i)
+            for (size_t lens = 0; lens < perLens.size(); ++lens)
+                out.push_back(perLens[lens][i]);
+    }
     if (out.empty()) error = "no frames decoded from INSV";
     return !out.empty();
 #endif

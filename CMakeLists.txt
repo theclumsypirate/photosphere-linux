@@ -29,6 +29,7 @@ add_library(ps_core
   src/core/multi_view.cpp
   src/core/local_warp.cpp
   src/core/exposure.cpp
+  src/core/eac.cpp
   src/core/seam.cpp
   src/core/seam_carving.cpp
   src/core/blender.cpp

@@ -1,5 +1,6 @@
 #include "audio/ambisonics.hpp"
 
+#include "core/eac.hpp"
 #include "core/rotation.hpp"
 
 #include <cmath>
@@ -37,6 +38,8 @@ int runAmbisonicsTests() {
 
     const float normAfter = std::sqrt(y * y + z * z + x * x);
     check(std::abs(normAfter - 2.0f) < 1e-5f, "directional norm is preserved");
+    check(isEacFrameSize(4096, 1344), "EAC track size is detected");
+    check(!isEacFrameSize(2048, 2048), "fisheye size is not EAC");
     return failures;
 }
 

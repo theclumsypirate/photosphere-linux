@@ -877,6 +877,12 @@ void MainWindow::openShaderPreview() {
         QMessageBox::warning(this, "No video", "Add a video first.");
         return;
     }
+    if (io::isEacVideo(videoPath)) {
+        QMessageBox::information(this, "GPU preview",
+                                 "GoPro EAC files are already stitched. Use the "
+                                 "panorama viewer after loading a frame.");
+        return;
+    }
     auto* dialog = new ShaderPreviewDialog(QString::fromStdString(videoPath),
                                            fovSpin_->value(), this);
     dialog->setAttribute(Qt::WA_DeleteOnClose, true);

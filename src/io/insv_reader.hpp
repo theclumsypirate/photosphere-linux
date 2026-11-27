@@ -25,6 +25,10 @@ double insvFrameRate(const std::string& path);
 // Duration in seconds, or 0 when unavailable.
 double insvDuration(const std::string& path);
 
+// True for GoPro MAX .360 files: two video tracks holding the top and bottom
+// halves of an EAC cubemap rather than two fisheye lenses.
+bool isEacVideo(const std::string& path);
+
 // Decodes only one frame pair near each requested timestamp by seeking
 // instead of walking the whole file. Much faster for sampling a long video.
 bool readInsvAtTimes(const std::string& path, const std::vector<double>& times,

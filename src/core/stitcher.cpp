@@ -306,6 +306,22 @@ Panorama stitchSession(const io::InputSession& session,
                        const StitchOptions& options,
                        std::string& diagnostics) {
     if (session.frames.empty()) { diagnostics = "no frames"; return {}; }
+    // GoPro MAX EAC frames are already stitched equirectangular images.
+    for (auto it = session.frames.rbegin(); it != session.frames.rend(); ++it) {
+        if (it->lens != -1 || it->image.empty()) continue;
+        Panorama pano;
+        pano.equirect = it->image;
+        if (options.width > 0 && options.width < pano.equirect.cols) {
+            cv::resize(pano.equirect, pano.equirect,
+                       cv::Size(options.width, options.width / 2),
+                       0, 0, cv::INTER_AREA);
+        }
+        pano.width = pano.equirect.cols;
+        pano.height = it->image.rows;
+        pano.seamMask = cv::Mat::ones(it->image.rows, it->image.cols, CV_8UC1) * 255;
+        diagnostics = "source: " + it->source + ", EAC equirectangular";
+        return pano;
+    }
     // Use the most recently added source, not the first one. When a video is
     // followed by a still, the user expects the still to be stitched.
     const std::string lastSource = session.frames.back().source;

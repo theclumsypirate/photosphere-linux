@@ -311,6 +311,19 @@ bool cmdVideo(int argc, char** argv) {
               << " fps\n";
     int written = 0;
     auto onFrames = [&](const std::vector<ps::LensFrame>& frames) -> bool {
+        if (frames.empty()) return true;
+        if (frames[0].lens == -1) {
+            cv::Mat direct = frames[0].image;
+            if (direct.cols != width || direct.rows != width / 2)
+                cv::resize(direct, direct, cv::Size(width, width / 2),
+                           0, 0, cv::INTER_AREA);
+            if (!writer.write(direct, error)) {
+                std::cerr << "video: " << error << "\n";
+                return false;
+            }
+            ++written;
+            return true;
+        }
         if (frames.size() < 2 || frames[0].lens == frames[1].lens) return true;
         std::string diagnostics;
         const ps::Panorama pano = ps::stitchDualFisheye({frames[0], frames[1]},
