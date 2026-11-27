@@ -6,6 +6,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <vector>
 
 namespace ps {
 namespace {
@@ -82,6 +83,31 @@ void xyzToCube(const Vec3& world, double& uf, double& vf, int& face) {
     rotateCubeFace(uf, vf, faceRotation(face));
 }
 
+// GoPro duplicates 64 pixels at each front to rear stitch line so the two
+// lens views can be blended in post. Dropping the duplicate leaves the clean
+// 3 by 2 EAC layout and removes both the hard seams and the double images.
+cv::Mat removeStitchOverlap(const cv::Mat& eac) {
+    if (eac.empty()) return {};
+    const int overlap = std::max(4, static_cast<int>(
+        std::lround(eac.cols * 64.0 / 4096.0)));
+    const int centers[2] = {
+        static_cast<int>(std::lround(eac.cols / 6.0)),
+        static_cast<int>(std::lround(eac.cols * 5.0 / 6.0))};
+    std::vector<cv::Mat> parts;
+    int previous = 0;
+    for (int center : centers) {
+        const int begin = center - overlap / 2;
+        const int end = begin + overlap;
+        if (begin <= previous || end >= eac.cols) continue;
+        parts.push_back(eac(cv::Rect(previous, 0, begin - previous, eac.rows)));
+        previous = end;
+    }
+    parts.push_back(eac(cv::Rect(previous, 0, eac.cols - previous, eac.rows)));
+    cv::Mat result;
+    cv::hconcat(parts, result);
+    return result;
+}
+
 } // namespace
 
 bool isEacFrameSize(int width, int height) {
@@ -92,12 +118,13 @@ bool isEacFrameSize(int width, int height) {
 
 cv::Mat eacToEquirect(const cv::Mat& eac, int outWidth) {
     if (eac.empty()) return {};
-    if (outWidth <= 0) outWidth = eac.cols;
+    const cv::Mat source = removeStitchOverlap(eac);
+    if (outWidth <= 0) outWidth = source.cols;
     const int outHeight = outWidth / 2;
-    if (outWidth <= 0 || outHeight <= 0) return {};
+    if (outWidth <= 0 || outHeight <= 0 || source.empty()) return {};
 
-    const double width = static_cast<double>(eac.cols);
-    const double height = static_cast<double>(eac.rows);
+    const double width = static_cast<double>(source.cols);
+    const double height = static_cast<double>(source.rows);
     const double uPad = 2.0 / width;
     const double vPad = 2.0 / height;
 
@@ -123,7 +150,7 @@ cv::Mat eacToEquirect(const cv::Mat& eac, int outWidth) {
         }
     }
     cv::Mat out;
-    cv::remap(eac, out, mapX, mapY, cv::INTER_LINEAR, cv::BORDER_REPLICATE);
+    cv::remap(source, out, mapX, mapY, cv::INTER_LINEAR, cv::BORDER_REPLICATE);
     // GoPro stores the two EAC halves with their poles inverted relative to
     // the v360 face order, so the final panorama needs a vertical flip.
     cv::flip(out, out, 0);
