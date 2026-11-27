@@ -5,6 +5,8 @@
 #include "gui/export_dialog.hpp"
 #include "gui/general_settings.hpp"
 #include "gui/hdr_export_worker.hpp"
+#include "gui/little_planet_dialog.hpp"
+#include "gui/multi_camera_dialog.hpp"
 #include "gui/save_format_dialog.hpp"
 #include "gui/stitch_worker.hpp"
 #include "gui/video_export_worker.hpp"
@@ -249,12 +251,14 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent) {
     autoButton->setStyleSheet("font-weight: bold;");
     auto* fullscreenButton = new QPushButton("Fullscreen preview", controls);
     auto* savePano = new QPushButton("Save panorama", controls);
-    auto* savePlanet = new QPushButton("Save little planet", controls);
+    auto* multiCamButton = new QPushButton("Multi-camera view", controls);
+    auto* savePlanet = new QPushButton("Little planet editor", controls);
     auto* saveTagged = new QPushButton("Save with GPano metadata", controls);
     left->addWidget(renderButton);
     left->addWidget(autoButton);
     left->addWidget(fullscreenButton);
     left->addWidget(savePano);
+    left->addWidget(multiCamButton);
     left->addWidget(savePlanet);
     left->addWidget(saveTagged);
 
@@ -315,6 +319,7 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent) {
     connect(exportButton_, &QPushButton::clicked, this, &MainWindow::renderVideo);
     connect(viewer_, &ViewerWidget::snapshotRequested, this, &MainWindow::saveSnapshot);
     connect(viewer_, &ViewerWidget::panoramaSaveRequested, this, &MainWindow::savePanorama);
+    connect(multiCamButton, &QPushButton::clicked, this, &MainWindow::openMultiCamera);
     connect(autoButton, &QPushButton::clicked, this, &MainWindow::autoStitchAll);
     connect(fullscreenButton, &QPushButton::clicked, this, &MainWindow::openFullscreen);
     connect(savePano, &QPushButton::clicked, this, &MainWindow::savePanorama);
@@ -856,16 +861,21 @@ void MainWindow::savePanorama() {
     hdrThread_->start();
 }
 
+void MainWindow::openMultiCamera() {
+    if (panorama_.empty()) {
+        QMessageBox::warning(this, "Nothing to show", "Stitch first.");
+        return;
+    }
+    auto* dialog = new MultiCameraDialog(panorama_, this);
+    dialog->setAttribute(Qt::WA_DeleteOnClose, true);
+    dialog->show();
+}
+
 void MainWindow::saveLittlePlanet() {
     if (panorama_.empty()) { QMessageBox::warning(this, "Nothing to save", "Stitch first."); return; }
-    const QString path = QFileDialog::getSaveFileName(this, "Save little planet", lastDir(), "PNG (*.png)");
-    if (path.isEmpty()) return;
-    LittlePlanetOptions options;
-    options.outputSize = std::min(4096, panorama_.cols / 2);
-    const cv::Mat planet = convertToLittlePlanet(panorama_, options);
-    QString saveError;
-    if (saveImageFile(path, planet, ".png", saveError)) setStatus("Saved " + path);
-    else QMessageBox::critical(this, "Save failed", saveError);
+    auto* dialog = new LittlePlanetDialog(panorama_, this);
+    dialog->setAttribute(Qt::WA_DeleteOnClose, true);
+    dialog->show();
 }
 
 void MainWindow::saveTagged() {

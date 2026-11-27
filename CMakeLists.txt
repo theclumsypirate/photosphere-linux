@@ -25,6 +25,7 @@ add_library(ps_core
   src/core/rotation.cpp
   src/core/spherical.cpp
   src/core/lens_model.cpp
+  src/core/multi_view.cpp
   src/core/local_warp.cpp
   src/core/exposure.cpp
   src/core/seam.cpp
@@ -104,6 +105,8 @@ if(PS_BUILD_GUI)
     src/gui/export_dialog.cpp
     src/gui/general_settings.cpp
     src/gui/hdr_export_worker.cpp
+    src/gui/little_planet_dialog.cpp
+    src/gui/multi_camera_dialog.cpp
     src/gui/save_format_dialog.cpp
     src/gui/stitch_worker.cpp
     src/gui/video_export_worker.cpp

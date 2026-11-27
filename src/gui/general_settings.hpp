@@ -34,6 +34,7 @@ public:
 
 private slots:
     void checkForUpdates();
+    void openLatestRelease(const QString& link);
 
 private:
     QComboBox* explorerCombo_ = nullptr;
@@ -44,6 +45,8 @@ private:
     QCheckBox* softwareCheck_ = nullptr;
     QCheckBox* gpuCheck_ = nullptr;
     QLabel* updateLabel_ = nullptr;
+    QString latestReleaseUrl_;
+    QString currentVersion_ = "1.0.1";
 };
 
 } // namespace ps::gui

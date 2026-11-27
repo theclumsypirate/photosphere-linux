@@ -3,6 +3,7 @@
 #include <QCheckBox>
 #include <QComboBox>
 #include <QDialogButtonBox>
+#include <QDesktopServices>
 #include <QDoubleSpinBox>
 #include <QFormLayout>
 #include <QHBoxLayout>
@@ -12,6 +13,8 @@
 #include <QLineEdit>
 #include <QNetworkAccessManager>
 #include <QNetworkReply>
+#include <QRegularExpression>
+#include <QVersionNumber>
 #include <QNetworkRequest>
 #include <QPushButton>
 #include <QSettings>
@@ -99,7 +102,12 @@ GeneralSettingsDialog::GeneralSettingsDialog(QWidget* parent) : QDialog(parent) 
 
     auto* updateLayout = new QHBoxLayout();
     auto* checkButton = new QPushButton("Check for updates", this);
+    currentVersion_ = QString(kCurrentVersion).remove('v');
     updateLabel_ = new QLabel("Current version: " + QString(kCurrentVersion), this);
+    updateLabel_->setTextInteractionFlags(Qt::TextBrowserInteraction);
+    updateLabel_->setOpenExternalLinks(false);
+    connect(updateLabel_, &QLabel::linkActivated, this,
+            &GeneralSettingsDialog::openLatestRelease);
     updateLayout->addWidget(checkButton);
     updateLayout->addWidget(updateLabel_, 1);
     connect(checkButton, &QPushButton::clicked, this,
@@ -147,12 +155,32 @@ void GeneralSettingsDialog::checkForUpdates() {
         const QString tag = object.value("tag_name").toString();
         if (tag.isEmpty()) {
             updateLabel_->setText("No release information found");
-        } else if (tag == QString(kCurrentVersion)) {
-            updateLabel_->setText("You are up to date (" + tag + ")");
+            return;
+        }
+        const QString url = object.value("html_url").toString();
+        latestReleaseUrl_ = url;
+        const QRegularExpression versionPattern("\\d+(?:\\.\\d+)+");
+        const QRegularExpressionMatch match = versionPattern.match(tag);
+        if (!match.hasMatch()) {
+            updateLabel_->setText("Release tag: " + tag.toHtmlEscaped());
+            return;
+        }
+        const QVersionNumber latest = QVersionNumber::fromString(match.captured());
+        const QVersionNumber current = QVersionNumber::fromString(currentVersion_);
+        if (QVersionNumber::compare(latest, current) <= 0) {
+            updateLabel_->setText("You are up to date (v" + currentVersion_ + ")");
+        } else if (url.isEmpty()) {
+            updateLabel_->setText("New version available: " + tag.toHtmlEscaped());
         } else {
-            updateLabel_->setText("New version available: " + tag);
+            updateLabel_->setText(
+                "<a href=\"" + url.toHtmlEscaped() + "\">New version " +
+                latest.toString() + " - open release</a>");
         }
     });
+}
+
+void GeneralSettingsDialog::openLatestRelease(const QString& link) {
+    if (!link.isEmpty()) QDesktopServices::openUrl(QUrl(link));
 }
 
 } // namespace ps::gui
