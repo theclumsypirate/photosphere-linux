@@ -26,6 +26,10 @@ public:
         bool multiband = true;
         bool hevc = false;
         bool spherical = true;
+        bool horizonLock = false;
+        bool flowState = false;
+        bool rotateAudio = false;
+        double smoothSeconds = 0.8;
     };
 
     explicit VideoExportWorker(QObject* parent = nullptr);

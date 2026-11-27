@@ -21,6 +21,7 @@ find_package(Threads REQUIRED)
 
 # Core: portable geometry, stitching and metadata algorithms.
 add_library(ps_core
+  src/audio/ambisonics.cpp
   src/core/gpu_info.cpp
   src/core/rotation.cpp
   src/core/spherical.cpp
@@ -32,6 +33,7 @@ add_library(ps_core
   src/core/seam_carving.cpp
   src/core/blender.cpp
   src/core/pose_refiner.cpp
+  src/core/stabilize.cpp
   src/core/stitcher.cpp
   src/core/renderer.cpp
   src/core/gpano.cpp
@@ -45,6 +47,7 @@ add_library(ps_io
   src/io/hdr_export.cpp
   src/io/image_io.cpp
   src/io/insv_reader.cpp
+  src/io/insv_telemetry.cpp
   src/io/frame_store.cpp
   src/io/video_writer.cpp)
 target_include_directories(ps_io PUBLIC src)
@@ -69,7 +72,7 @@ endif()
 if(PS_WITH_FFMPEG)
   find_package(PkgConfig QUIET)
   if(PkgConfig_FOUND)
-    pkg_check_modules(AV QUIET libavformat libavcodec libavutil libswscale)
+    pkg_check_modules(AV QUIET libavformat libavcodec libavutil libswresample libswscale)
   endif()
   if(AV_FOUND)
     target_compile_definitions(ps_io PUBLIC PS_HAVE_FFMPEG=1)
@@ -90,7 +93,8 @@ if(PS_BUILD_TESTS)
   add_executable(ps_tests tests/test_main.cpp
     tests/test_rotation.cpp
     tests/test_spherical.cpp
-    tests/test_lens_model.cpp)
+    tests/test_lens_model.cpp
+    tests/test_ambisonics.cpp)
   target_link_libraries(ps_tests PRIVATE ps_core ps_io ${OpenCV_LIBS})
   add_test(NAME ps_tests COMMAND ps_tests)
 endif()
@@ -108,6 +112,9 @@ if(PS_BUILD_GUI)
     src/gui/little_planet_dialog.cpp
     src/gui/multi_camera_dialog.cpp
     src/gui/save_format_dialog.cpp
+    src/gui/shader_playback.cpp
+    src/gui/shader_preview_dialog.cpp
+    src/gui/shader_viewer.cpp
     src/gui/stitch_worker.cpp
     src/gui/video_export_worker.cpp
     src/gui/resources.qrc)

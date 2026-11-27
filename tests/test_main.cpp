@@ -6,6 +6,7 @@ namespace ps {
 int runRotationTests();
 int runSphericalTests();
 int runLensModelTests();
+int runAmbisonicsTests();
 } // namespace ps
 
 int main() {
@@ -14,6 +15,7 @@ int main() {
         {"rotation", ps::runRotationTests},
         {"spherical", ps::runSphericalTests},
         {"lens_model", ps::runLensModelTests},
+        {"ambisonics", ps::runAmbisonicsTests},
     };
     for (const auto& [name, fn] : suites) {
         const int failed = fn();

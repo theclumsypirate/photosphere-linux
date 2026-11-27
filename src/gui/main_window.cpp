@@ -8,6 +8,7 @@
 #include "gui/little_planet_dialog.hpp"
 #include "gui/multi_camera_dialog.hpp"
 #include "gui/save_format_dialog.hpp"
+#include "gui/shader_preview_dialog.hpp"
 #include "gui/stitch_worker.hpp"
 #include "gui/video_export_worker.hpp"
 #include "core/little_planet.hpp"
@@ -250,6 +251,7 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent) {
     auto* autoButton = new QPushButton("Auto stitch all files", controls);
     autoButton->setStyleSheet("font-weight: bold;");
     auto* fullscreenButton = new QPushButton("Fullscreen preview", controls);
+    auto* gpuPreviewButton = new QPushButton("GPU fisheye preview", controls);
     auto* savePano = new QPushButton("Save panorama", controls);
     auto* multiCamButton = new QPushButton("Multi-camera view", controls);
     auto* savePlanet = new QPushButton("Little planet editor", controls);
@@ -257,6 +259,7 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent) {
     left->addWidget(renderButton);
     left->addWidget(autoButton);
     left->addWidget(fullscreenButton);
+    left->addWidget(gpuPreviewButton);
     left->addWidget(savePano);
     left->addWidget(multiCamButton);
     left->addWidget(savePlanet);
@@ -322,6 +325,7 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent) {
     connect(multiCamButton, &QPushButton::clicked, this, &MainWindow::openMultiCamera);
     connect(autoButton, &QPushButton::clicked, this, &MainWindow::autoStitchAll);
     connect(fullscreenButton, &QPushButton::clicked, this, &MainWindow::openFullscreen);
+    connect(gpuPreviewButton, &QPushButton::clicked, this, &MainWindow::openShaderPreview);
     connect(savePano, &QPushButton::clicked, this, &MainWindow::savePanorama);
     connect(savePlanet, &QPushButton::clicked, this, &MainWindow::saveLittlePlanet);
     connect(saveTagged, &QPushButton::clicked, this, &MainWindow::saveTagged);
@@ -706,6 +710,10 @@ void MainWindow::renderVideo() {
     options.multiband = multibandCheck_->isChecked();
     options.hevc = dialogOptions.hevc;
     options.spherical = dialogOptions.spherical;
+    options.horizonLock = dialogOptions.horizonLock;
+    options.flowState = dialogOptions.flowState;
+    options.rotateAudio = dialogOptions.rotateAudio;
+    options.smoothSeconds = dialogOptions.smoothSeconds;
 
     exportCancel_ = false;
     exportThread_ = new QThread(this);
@@ -859,6 +867,20 @@ void MainWindow::savePanorama() {
     });
     setStatus("Merging HDR bracket...");
     hdrThread_->start();
+}
+
+void MainWindow::openShaderPreview() {
+    std::string videoPath;
+    for (const auto& path : inputPaths())
+        if (io::isVideoFile(path)) { videoPath = path; break; }
+    if (videoPath.empty()) {
+        QMessageBox::warning(this, "No video", "Add a video first.");
+        return;
+    }
+    auto* dialog = new ShaderPreviewDialog(QString::fromStdString(videoPath),
+                                           fovSpin_->value(), this);
+    dialog->setAttribute(Qt::WA_DeleteOnClose, true);
+    dialog->show();
 }
 
 void MainWindow::openMultiCamera() {

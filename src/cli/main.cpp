@@ -1,12 +1,14 @@
 #include "core/gpano.hpp"
 #include "core/gpu_info.hpp"
 #include "core/little_planet.hpp"
+#include "core/stabilize.hpp"
 #include "core/stitcher.hpp"
 #include "io/exif_pose.hpp"
 #include "io/frame_store.hpp"
 #include "io/hdr_export.hpp"
 #include "io/image_io.hpp"
 #include "io/insv_reader.hpp"
+#include "io/insv_telemetry.hpp"
 #include "io/video_writer.hpp"
 
 #include <opencv2/imgcodecs.hpp>
@@ -34,11 +36,16 @@ void usage() {
               << "  --flip, --no-flip\n"
               << "  stitch    -o OUT.jpg [-w WIDTH] [--fov DEG] [--flip|--no-flip]\n"
               << "            [--no-multiband] [--max-frames N] INPUT...\n"
-              << "  inspect   INPUT...\n"
+              << "  gyro      -i VIDEO.insv       show IMU telemetry from the trailer\n"
+               << "  inspect   INPUT...\n"
               << "  extract   -i VIDEO.insv -o DIR [--max N] [--step N]\n"
               << "  auto      -o DIR INPUT... [-w WIDTH] [--fov DEG]\n"
               << "  video     -i VIDEO.insv -o OUT.mp4 [--every SEC] [-w WIDTH]\n"
               << "            [--crf N] [--bitrate BPS] [--hevc] [--no-spherical]\n"
+               << "            [--stabilize|--flowstate] [--smooth SEC]\n"
+               << "            [--horizon-strength F] [--yaw-strength F] [--pitch-strength F]\n"
+               << "            [--rotate-audio] [--force-ambisonic]\n"
+               << "            [--audio-input AUDIO]\n"
               << "  batch     -i VIDEO.insv -o PREFIX [--every SEC] [--count N]\n"
               << "            [-w WIDTH] [--fov DEG] [--flip|--no-flip]\n"
               << "  littleplanet -i PANO.jpg -o OUT.png [--size N] [--fov DEG]\n"
@@ -252,13 +259,51 @@ bool cmdVideo(int argc, char** argv) {
     options.dropOutliers = !hasFlag(argc, argv, "--keep-all");
     options.useLocalWarp = !hasFlag(argc, argv, "--no-local-warp");
 
+    ps::Stabilizer stabilizer;
+    bool stabilized = false;
+    const bool rotateAudio = hasFlag(argc, argv, "--rotate-audio");
+    if (hasFlag(argc, argv, "--stabilize") || hasFlag(argc, argv, "--flowstate") ||
+        rotateAudio) {
+        ps::io::InsvTelemetry telemetry;
+        std::string telemetryError;
+        if (!ps::io::readInsvTelemetry(input, telemetry, telemetryError)) {
+            std::cerr << "video: stabilization unavailable: " << telemetryError << "\n";
+        } else {
+            ps::StabilizeOptions stabilizeOptions;
+            stabilizeOptions.mode = hasFlag(argc, argv, "--flowstate")
+                                        ? ps::StabilizeMode::FlowState
+                                        : ps::StabilizeMode::HorizonLock;
+            stabilizeOptions.smoothSeconds = numberOption(argc, argv, "--smooth", 0.8);
+            stabilizeOptions.horizonStrength = numberOption(argc, argv, "--horizon-strength", 1.0);
+            stabilizeOptions.yawStrength = numberOption(argc, argv, "--yaw-strength", 0.7);
+            stabilizeOptions.pitchStrength = numberOption(argc, argv, "--pitch-strength", 0.85);
+            if (!stabilizer.load(telemetry, stabilizeOptions, telemetryError)) {
+                std::cerr << "video: stabilization unavailable: " << telemetryError << "\n";
+            } else {
+                stabilized = true;
+                std::cout << "stabilization=" << (stabilizeOptions.mode == ps::StabilizeMode::FlowState
+                                                     ? "FlowState" : "horizon lock")
+                          << ", IMU samples=" << telemetry.samples.size()
+                          << ", roll range=" << stabilizer.rollAt(0.0) << ".."
+                          << stabilizer.rollAt(stabilizer.durationSeconds() * 0.5)
+                          << " deg\n";
+            }
+        }
+    }
+
     std::string error;
     ps::io::Mp4Writer writer(output, width, width / 2, fps);
     writer.setVideoQuality(numberOption(argc, argv, "--crf", 18.0),
                            static_cast<int64_t>(numberOption(argc, argv, "--bitrate", 0)));
     writer.setHevc(hasFlag(argc, argv, "--hevc"));
     writer.setSphericalMetadata(!hasFlag(argc, argv, "--no-spherical"));
-    writer.setAudioSource(input, 0.0,
+    if (rotateAudio && stabilizer.valid())
+        writer.setAmbisonicRotation([&stabilizer](double t) {
+            return stabilizer.orientationAt(t);
+        });
+    writer.setForceAmbisonic(hasFlag(argc, argv, "--force-ambisonic"));
+    const std::string audioInput = optionValue(argc, argv, "--audio-input");
+    writer.setAudioSource(audioInput.empty() ? input : audioInput, 0.0,
                           static_cast<double>(times.size()) / fps);
     if (!writer.open(error)) { std::cerr << "video: " << error << "\n"; return false; }
     std::cout << "duration=" << duration << " s, " << times.size()
@@ -271,7 +316,10 @@ bool cmdVideo(int argc, char** argv) {
         const ps::Panorama pano = ps::stitchDualFisheye({frames[0], frames[1]},
                                                         options, diagnostics);
         if (pano.equirect.empty()) return true;
-        if (!writer.write(pano.equirect, error)) {
+        cv::Mat frame = pano.equirect;
+        if (stabilized) frame = stabilizer.apply(frame, frames[0].timestamp);
+        if (frame.empty()) return true;
+        if (!writer.write(frame, error)) {
             std::cerr << "video: " << error << "\n";
             return false;
         }
@@ -359,6 +407,37 @@ bool cmdAuto(int argc, char** argv) {
         ++index;
     }
     std::cout << "Wrote " << index << " panoramas to " << dir << "\n";
+    return true;
+}
+
+bool cmdGyro(int argc, char** argv) {
+    const std::string input = optionValue(argc, argv, "-i");
+    if (input.empty()) {
+        std::cout << "gyro: use -i VIDEO.insv\n";
+        return false;
+    }
+    ps::io::InsvTelemetry telemetry;
+    std::string error;
+    if (!ps::io::readInsvTelemetry(input, telemetry, error)) {
+        std::cout << "gyro: " << error << "\n";
+        return false;
+    }
+    std::cout << "camera: " << telemetry.cameraModel << "\n"
+              << "fps: " << telemetry.fps << "\n"
+              << "raw: " << telemetry.raw << "\n"
+              << "lens pose: yaw=" << telemetry.lensYawDeg
+              << " pitch=" << telemetry.lensPitchDeg
+              << " roll=" << telemetry.lensRollDeg << "\n"
+              << "samples: " << telemetry.samples.size()
+              << " duration=" << telemetry.secondsAt(telemetry.samples.size() - 1)
+              << "s\n";
+    for (size_t i = 0; i < std::min<size_t>(3, telemetry.samples.size()); ++i) {
+        const auto& s = telemetry.samples[i];
+        std::cout << "  " << telemetry.secondsAt(i) << "s gyro "
+                  << s.gyro[0] << " " << s.gyro[1] << " " << s.gyro[2]
+                  << " acc " << s.acc[0] << " " << s.acc[1] << " " << s.acc[2]
+                  << "\n";
+    }
     return true;
 }
 
@@ -480,6 +559,7 @@ int main(int argc, char** argv) {
     }
     if (command == "stitch") return cmdStitch(argc, argv) ? 0 : 2;
     if (command == "inspect") return cmdInspect(argc, argv) ? 0 : 2;
+    if (command == "gyro") return cmdGyro(argc, argv) ? 0 : 2;
     if (command == "extract") return cmdExtract(argc, argv) ? 0 : 2;
     if (command == "batch") return cmdBatch(argc, argv) ? 0 : 2;
     if (command == "auto") return cmdAuto(argc, argv) ? 0 : 2;

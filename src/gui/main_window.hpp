@@ -45,6 +45,7 @@ private slots:
     void pasteFromClipboard();
     void saveSnapshot();
     void openMultiCamera();
+    void openShaderPreview();
     void savePanorama();
     void saveLittlePlanet();
     void saveTagged();

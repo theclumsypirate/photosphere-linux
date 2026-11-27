@@ -19,6 +19,10 @@ struct ExportDialogOptions {
     QString output;
     bool hevc = false;
     bool spherical = true;
+    bool horizonLock = false;
+    bool flowState = false;
+    bool rotateAudio = false;
+    double smoothSeconds = 0.8;
 };
 
 class ExportDialog : public QDialog {
@@ -42,6 +46,10 @@ private:
     QLineEdit* outputEdit_ = nullptr;
     QCheckBox* hevcCheck_ = nullptr;
     QCheckBox* sphericalCheck_ = nullptr;
+    QCheckBox* horizonCheck_ = nullptr;
+    QCheckBox* flowStateCheck_ = nullptr;
+    QCheckBox* rotateAudioCheck_ = nullptr;
+    QDoubleSpinBox* smoothSpin_ = nullptr;
     double sourceFps_ = 25.0;
 };
 

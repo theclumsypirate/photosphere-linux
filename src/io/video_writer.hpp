@@ -1,7 +1,10 @@
 #pragma once
 
+#include "core/rotation.hpp"
+
 #include <opencv2/core.hpp>
 
+#include <functional>
 #include <string>
 
 namespace ps::io {
@@ -16,6 +19,15 @@ public:
     // trimmed to [startTime, endTime] seconds (endTime = 0 means full file).
     void setAudioSource(const std::string& inputPath, double startTime,
                         double endTime);
+
+    // When the source audio is first-order ambisonics, rotate the sound field
+    // by the camera orientation at each audio frame. The callback receives
+    // video time in seconds and returns a camera-to-world rotation.
+    void setAmbisonicRotation(std::function<Mat3(double)> rotationAt);
+
+    // Treat a four-channel audio track as first-order ambisonics even when the
+    // container does not tag it. Useful for cameras that omit the layout.
+    void setForceAmbisonic(bool enabled);
 
     bool open(std::string& error);
     bool write(const cv::Mat& bgr, std::string& error);

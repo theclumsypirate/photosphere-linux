@@ -52,6 +52,20 @@ ExportDialog::ExportDialog(double durationSeconds, double sourceFps,
     hevcCheck_ = new QCheckBox("H.265 / HEVC", this);
     sphericalCheck_ = new QCheckBox("360 degree metadata", this);
     sphericalCheck_->setChecked(true);
+    horizonCheck_ = new QCheckBox("Level horizon (IMU)", this);
+    flowStateCheck_ = new QCheckBox("FlowState, remove shake (IMU)", this);
+    rotateAudioCheck_ = new QCheckBox("Rotate ambisonic audio (IMU)", this);
+    smoothSpin_ = new QDoubleSpinBox(this);
+    smoothSpin_->setRange(0.1, 5.0);
+    smoothSpin_->setDecimals(2);
+    smoothSpin_->setValue(0.8);
+    smoothSpin_->setSuffix(" s");
+    connect(horizonCheck_, &QCheckBox::toggled, this, [this](bool checked) {
+        if (checked) flowStateCheck_->setChecked(false);
+    });
+    connect(flowStateCheck_, &QCheckBox::toggled, this, [this](bool checked) {
+        if (checked) horizonCheck_->setChecked(false);
+    });
 
     outputEdit_ = new QLineEdit(defaultOutput, this);
     outputEdit_->setReadOnly(true);
@@ -66,6 +80,10 @@ ExportDialog::ExportDialog(double durationSeconds, double sourceFps,
     form->addRow(new QLabel("End at"), endSpin_);
     form->addRow(hevcCheck_);
     form->addRow(sphericalCheck_);
+    form->addRow(horizonCheck_);
+    form->addRow(flowStateCheck_);
+    form->addRow(rotateAudioCheck_);
+    form->addRow(new QLabel("Stabilization smoothness"), smoothSpin_);
     form->addRow(new QLabel("Output file"), outputEdit_);
     form->addRow(chooseButton);
 
@@ -88,6 +106,10 @@ ExportDialogOptions ExportDialog::options() const {
     out.output = outputEdit_->text();
     out.hevc = hevcCheck_->isChecked();
     out.spherical = sphericalCheck_->isChecked();
+    out.horizonLock = horizonCheck_->isChecked();
+    out.flowState = flowStateCheck_->isChecked();
+    out.rotateAudio = rotateAudioCheck_->isChecked();
+    out.smoothSeconds = smoothSpin_->value();
     out.everySeconds = stepSpin_->value() / sourceFps_;
     out.fps = sourceFps_ / static_cast<double>(std::max(1, stepSpin_->value()));
     return out;

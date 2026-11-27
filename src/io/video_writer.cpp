@@ -1,5 +1,7 @@
 #include "io/video_writer.hpp"
 
+#include "audio/ambisonics.hpp"
+
 #ifdef PS_HAVE_FFMPEG
 
 extern "C" {
@@ -7,10 +9,12 @@ extern "C" {
 #include <libavformat/avformat.h>
 #include <libavutil/imgutils.h>
 #include <libavutil/spherical.h>
+#include <libswresample/swresample.h>
 #include <libswscale/swscale.h>
 }
 
 #include <algorithm>
+#include <cstring>
 #include <vector>
 
 namespace ps::io {
@@ -47,8 +51,184 @@ struct Mp4Writer::Impl {
     AVStream* audioOutputStream = nullptr;
     int audioStreamIndex = -1;
     std::vector<AVPacket*> audioPackets;
+    std::vector<double> audioPacketTimes;
     size_t audioIndex = 0;
+    std::function<Mat3(double)> audioRotation;
+    bool forceAmbisonic = false;
+    bool audioPacketsEncoded = false;
+
+    bool encodeRotatedAudio(std::string& error);
 };
+
+bool Mp4Writer::Impl::encodeRotatedAudio(std::string& error) {
+    AVStream* input = audioFormat->streams[audioStreamIndex];
+    if (!audioRotation) {
+        error = "no ambisonic rotation callback";
+        return false;
+    }
+    const AVCodec* decoder = avcodec_find_decoder(input->codecpar->codec_id);
+    const AVCodec* encoderCodec = avcodec_find_encoder(AV_CODEC_ID_AAC);
+    if (!decoder || !encoderCodec) {
+        error = "no decoder or AAC encoder for ambisonic audio";
+        return false;
+    }
+    AVCodecContext* dec = avcodec_alloc_context3(decoder);
+    AVCodecContext* enc = avcodec_alloc_context3(encoderCodec);
+    AVFrame* decFrame = av_frame_alloc();
+    AVFrame* encFrame = av_frame_alloc();
+    AVPacket* packet = av_packet_alloc();
+    AVPacket* outPacket = av_packet_alloc();
+    SwrContext* swr = nullptr;
+    if (!dec || !enc || !decFrame || !encFrame || !packet || !outPacket) {
+        error = "cannot allocate ambisonic audio contexts";
+        return false;
+    }
+    bool ok = avcodec_parameters_to_context(dec, input->codecpar) >= 0 &&
+              avcodec_open2(dec, decoder, nullptr) >= 0;
+    if (!ok) { error = "cannot open ambisonic audio decoder"; return false; }
+
+    enc->sample_fmt = AV_SAMPLE_FMT_FLTP;
+    enc->sample_rate = dec->sample_rate;
+    // AAC does not accept the ambisonic channel order. Encode the four ACN
+    // channels with a plain layout and tag the output stream as ambisonics.
+    enc->ch_layout = AV_CHANNEL_LAYOUT_QUAD;
+    enc->bit_rate = 256000;
+    enc->time_base = {1, std::max(1, dec->sample_rate)};
+    if (avcodec_open2(enc, encoderCodec, nullptr) < 0) {
+        error = "cannot open four-channel audio encoder";
+        return false;
+    }
+    AVStream* output = avformat_new_stream(format, nullptr);
+    if (!output || avcodec_parameters_from_context(output->codecpar, enc) < 0) {
+        error = "cannot create rotated audio stream";
+        return false;
+    }
+    output->codecpar->ch_layout = AV_CHANNEL_LAYOUT_AMBISONIC_FIRST_ORDER;
+    output->codecpar->codec_tag = 0;
+    output->time_base = enc->time_base;
+    audioOutputStream = output;
+    audioPacketsEncoded = true;
+
+    const int64_t startSamples =
+        static_cast<int64_t>(audioStart * static_cast<double>(enc->sample_rate));
+    const double secondsPerTick = std::max(1e-9, av_q2d(input->time_base));
+    auto emit = [&](AVFrame* audioFrame, double seconds) {
+        AVFrame* source = audioFrame;
+        float* planes[4] = {nullptr, nullptr, nullptr, nullptr};
+        uint8_t** converted = nullptr;
+        if (source->format != AV_SAMPLE_FMT_FLTP || source->ch_layout.nb_channels != 4) {
+            if (!swr) {
+                AVChannelLayout outLayout{AV_CHANNEL_ORDER_UNSPEC, 4, 0, nullptr};
+                AVChannelLayout inLayout{AV_CHANNEL_ORDER_UNSPEC, 4, 0, nullptr};
+                if (swr_alloc_set_opts2(&swr, &outLayout, AV_SAMPLE_FMT_FLTP,
+                                        enc->sample_rate, &inLayout,
+                                        static_cast<AVSampleFormat>(source->format),
+                                        source->sample_rate, 0, nullptr) < 0 ||
+                    swr_init(swr) < 0) {
+                    return;
+                }
+            }
+            if (av_samples_alloc_array_and_samples(&converted, nullptr, 4,
+                                                   source->nb_samples,
+                                                   AV_SAMPLE_FMT_FLTP, 0) < 0)
+                return;
+            const uint8_t* inData[4] = {source->data[0], source->data[1],
+                                        source->data[2], source->data[3]};
+            if (swr_convert(swr, converted, source->nb_samples, inData,
+                            source->nb_samples) < 0) {
+                av_freep(&converted[0]);
+                return;
+            }
+            for (int i = 0; i < 4; ++i)
+                planes[i] = reinterpret_cast<float*>(converted[i]);
+        } else {
+            for (int i = 0; i < 4; ++i)
+                planes[i] = reinterpret_cast<float*>(source->data[i]);
+        }
+        if (seconds < audioStart || (audioEnd > 0 && seconds > audioEnd)) {
+            if (converted && converted[0]) av_freep(&converted[0]);
+            return;
+        }
+        audio::FoaMatrix matrix = audio::foaRotation(audioRotation(seconds));
+        audio::rotateFoa(planes, source->nb_samples, matrix);
+        av_frame_unref(encFrame);
+        encFrame->format = AV_SAMPLE_FMT_FLTP;
+        encFrame->sample_rate = enc->sample_rate;
+        encFrame->ch_layout = enc->ch_layout;
+        encFrame->nb_samples = source->nb_samples;
+        encFrame->pts = static_cast<int64_t>(seconds * enc->sample_rate) - startSamples;
+        if (av_frame_get_buffer(encFrame, 0) >= 0) {
+            for (int i = 0; i < 4; ++i)
+                std::memcpy(encFrame->data[i], planes[i],
+                            static_cast<size_t>(source->nb_samples) * sizeof(float));
+            avcodec_send_frame(enc, encFrame);
+            int receive = 0;
+            while ((receive = avcodec_receive_packet(enc, outPacket)) == 0) {
+                av_packet_rescale_ts(outPacket, enc->time_base, output->time_base);
+                AVPacket* copy = av_packet_alloc();
+                if (copy && av_packet_ref(copy, outPacket) >= 0) {
+                    audioPackets.push_back(copy);
+                    audioPacketTimes.push_back(seconds - audioStart);
+                } else {
+                    av_packet_free(&copy);
+                }
+                av_packet_unref(outPacket);
+            }
+        }
+        if (converted && converted[0]) av_freep(&converted[0]);
+    };
+
+    av_seek_frame(audioFormat, audioStreamIndex, 0, AVSEEK_FLAG_BACKWARD);
+    while (av_read_frame(audioFormat, packet) >= 0) {
+        if (packet->stream_index == audioStreamIndex) {
+            const int64_t pts = packet->pts != AV_NOPTS_VALUE ? packet->pts
+                                                              : packet->dts;
+            const double packetSeconds = pts != AV_NOPTS_VALUE
+                                             ? static_cast<double>(pts) * secondsPerTick
+                                             : 0.0;
+            avcodec_send_packet(dec, packet);
+            int64_t consumed = 0;
+            int receive = 0;
+            while ((receive = avcodec_receive_frame(dec, decFrame)) == 0) {
+                const double seconds = packetSeconds +
+                    static_cast<double>(consumed) / std::max(1, dec->sample_rate);
+                consumed += decFrame->nb_samples;
+                emit(decFrame, seconds);
+            }
+        }
+        av_packet_unref(packet);
+    }
+    avcodec_send_packet(dec, nullptr);
+    int receive = 0;
+    double tailSeconds = audioPackets.empty() ? 0.0
+                                              : audioPacketTimes.back() + audioStart;
+    while ((receive = avcodec_receive_frame(dec, decFrame)) == 0) {
+        tailSeconds += static_cast<double>(decFrame->nb_samples) /
+                       std::max(1, dec->sample_rate);
+        emit(decFrame, tailSeconds);
+    }
+    avcodec_send_frame(enc, nullptr);
+    while ((receive = avcodec_receive_packet(enc, outPacket)) == 0) {
+        av_packet_rescale_ts(outPacket, enc->time_base, output->time_base);
+        AVPacket* copy = av_packet_alloc();
+        if (copy && av_packet_ref(copy, outPacket) >= 0) {
+            audioPackets.push_back(copy);
+            audioPacketTimes.push_back(audioPackets.empty() ? 0.0 : audioPacketTimes.back());
+        } else {
+            av_packet_free(&copy);
+        }
+        av_packet_unref(outPacket);
+    }
+
+    if (swr) swr_free(&swr);
+    av_packet_free(&packet);
+    av_packet_free(&outPacket);
+    av_frame_free(&decFrame);
+    av_frame_free(&encFrame);
+    avcodec_free_context(&dec);
+    avcodec_free_context(&enc);
+    return true;
+}
 
 void Mp4Writer::setPreferHardwareEncoder(bool enabled) {
     g_preferHardwareEncoder = enabled;
@@ -69,6 +249,14 @@ void Mp4Writer::setAudioSource(const std::string& inputPath, double startTime,
     impl_->audioStart = std::max(0.0, startTime);
     impl_->audioEnd = endTime;
     impl_->hasAudioSource = !inputPath.empty();
+}
+
+void Mp4Writer::setAmbisonicRotation(std::function<Mat3(double)> rotationAt) {
+    impl_->audioRotation = std::move(rotationAt);
+}
+
+void Mp4Writer::setForceAmbisonic(bool enabled) {
+    impl_->forceAmbisonic = enabled;
 }
 
 Mp4Writer::Mp4Writer(const std::string& path, int width, int height, double fps)
@@ -167,13 +355,31 @@ bool Mp4Writer::open(std::string& error) {
         for (unsigned i = 0; i < impl_->audioFormat->nb_streams; ++i) {
             AVStream* input = impl_->audioFormat->streams[i];
             if (input->codecpar->codec_type != AVMEDIA_TYPE_AUDIO) continue;
+            impl_->audioStreamIndex = static_cast<int>(i);
+            bool ambisonicLayout = input->codecpar->ch_layout.order ==
+                                   AV_CHANNEL_ORDER_AMBISONIC;
+            if (!ambisonicLayout && input->codecpar->ch_layout.order ==
+                                        AV_CHANNEL_ORDER_CUSTOM) {
+                for (int c = 0; c < 4; ++c) {
+                    const int id = input->codecpar->ch_layout.u.map[c].id;
+                    if (id >= AV_CHAN_AMBISONIC_BASE && id <= AV_CHAN_AMBISONIC_END)
+                        ambisonicLayout = true;
+                }
+            }
+            const bool firstOrder = input->codecpar->ch_layout.nb_channels == 4 &&
+                                    (ambisonicLayout || impl_->forceAmbisonic);
+            if (firstOrder && impl_->audioRotation &&
+                impl_->encodeRotatedAudio(error)) {
+                break;
+            }
+            impl_->audioOutputStream = nullptr;
+            impl_->audioPacketsEncoded = false;
             AVStream* output = avformat_new_stream(impl_->format, nullptr);
             if (!output || avcodec_parameters_copy(output->codecpar,
                                                    input->codecpar) < 0) break;
             output->codecpar->codec_tag = 0;
             output->time_base = input->time_base;
             impl_->audioOutputStream = output;
-            impl_->audioStreamIndex = static_cast<int>(i);
             const double timeBase = av_q2d(input->time_base);
             AVPacket* packet = av_packet_alloc();
             if (packet) {
@@ -186,10 +392,12 @@ bool Mp4Writer::open(std::string& error) {
                         if (seconds >= impl_->audioStart &&
                             (impl_->audioEnd <= 0 || seconds <= impl_->audioEnd)) {
                             AVPacket* copy = av_packet_alloc();
-                            if (copy && av_packet_ref(copy, packet) >= 0)
+                            if (copy && av_packet_ref(copy, packet) >= 0) {
                                 impl_->audioPackets.push_back(copy);
-                            else
+                                impl_->audioPacketTimes.push_back(seconds - impl_->audioStart);
+                            } else {
                                 av_packet_free(&copy);
+                            }
                         }
                     }
                     av_packet_unref(packet);
@@ -230,20 +438,24 @@ void Mp4Writer::pumpAudio(double uptoSeconds, bool all) {
     AVStream* input = impl_->audioFormat->streams[impl_->audioStreamIndex];
     AVStream* output = impl_->audioOutputStream;
     const AVRational inTimeBase = input->time_base;
-    const double inSecondsPerTick = std::max(1e-9, av_q2d(inTimeBase));
-    const int64_t startTicks = static_cast<int64_t>(impl_->audioStart / inSecondsPerTick);
+    const int64_t startTicks = static_cast<int64_t>(
+        impl_->audioStart / std::max(1e-9, av_q2d(inTimeBase)));
     while (impl_->audioIndex < impl_->audioPackets.size()) {
         AVPacket* packet = impl_->audioPackets[impl_->audioIndex];
-        const int64_t timestamp = packet->pts != AV_NOPTS_VALUE ? packet->pts : packet->dts;
-        const double seconds = timestamp * inSecondsPerTick;
+        const double seconds = impl_->audioIndex < impl_->audioPacketTimes.size()
+                                   ? impl_->audioPacketTimes[impl_->audioIndex]
+                                   : 0.0;
         if (!all && seconds > uptoSeconds) break;
-        if (packet->pts != AV_NOPTS_VALUE)
-            packet->pts = av_rescale_q(packet->pts - startTicks, inTimeBase,
-                                       output->time_base);
-        if (packet->dts != AV_NOPTS_VALUE)
-            packet->dts = av_rescale_q(packet->dts - startTicks, inTimeBase,
-                                       output->time_base);
-        packet->duration = av_rescale_q(packet->duration, inTimeBase, output->time_base);
+        if (!impl_->audioPacketsEncoded) {
+            if (packet->pts != AV_NOPTS_VALUE)
+                packet->pts = av_rescale_q(packet->pts - startTicks, inTimeBase,
+                                           output->time_base);
+            if (packet->dts != AV_NOPTS_VALUE)
+                packet->dts = av_rescale_q(packet->dts - startTicks, inTimeBase,
+                                           output->time_base);
+            packet->duration = av_rescale_q(packet->duration, inTimeBase,
+                                            output->time_base);
+        }
         packet->stream_index = output->index;
         av_interleaved_write_frame(impl_->format, packet);
         av_packet_unref(packet);
@@ -312,6 +524,7 @@ void Mp4Writer::finish() {
     av_write_trailer(impl_->format);
     for (AVPacket* packet : impl_->audioPackets) av_packet_free(&packet);
     impl_->audioPackets.clear();
+    impl_->audioPacketTimes.clear();
     if (impl_->audioFormat) avformat_close_input(&impl_->audioFormat);
     if (impl_->sws) sws_freeContext(impl_->sws);
     if (impl_->frame) av_frame_free(&impl_->frame);
@@ -335,6 +548,8 @@ void Mp4Writer::setVideoQuality(double, int64_t) {}
 void Mp4Writer::setSphericalMetadata(bool) {}
 void Mp4Writer::setHevc(bool) {}
 void Mp4Writer::setAudioSource(const std::string&, double, double) {}
+void Mp4Writer::setAmbisonicRotation(std::function<Mat3(double)>) {}
+void Mp4Writer::setForceAmbisonic(bool) {}
 void Mp4Writer::pumpAudio(double, bool) {}
 
 Mp4Writer::Mp4Writer(const std::string&, int, int, double) : impl_(new Impl()) {}
