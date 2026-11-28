@@ -6,7 +6,10 @@
 #include <QDialogButtonBox>
 #include <QDoubleSpinBox>
 #include <QFileDialog>
+#include <QFileInfo>
 #include <QFormLayout>
+#include <QHBoxLayout>
+#include <QInputDialog>
 #include <QLabel>
 #include <QLineEdit>
 #include <QPushButton>
@@ -68,9 +71,24 @@ ExportDialog::ExportDialog(double durationSeconds, double sourceFps,
     });
 
     outputEdit_ = new QLineEdit(defaultOutput, this);
-    outputEdit_->setReadOnly(true);
     auto* chooseButton = new QPushButton("Choose output file", this);
     connect(chooseButton, &QPushButton::clicked, this, &ExportDialog::chooseOutput);
+    auto* renameButton = new QPushButton("Rename", this);
+    connect(renameButton, &QPushButton::clicked, this, [this]() {
+        const QFileInfo info(outputEdit_->text());
+        bool ok = false;
+        const QString name = QInputDialog::getText(
+            this, "Rename output", "File name:", QLineEdit::Normal,
+            info.fileName(), &ok);
+        if (!ok || name.trimmed().isEmpty()) return;
+        QString fileName = name.trimmed();
+        if (!fileName.endsWith(".mp4", Qt::CaseInsensitive))
+            fileName += ".mp4";
+        outputEdit_->setText(info.absoluteDir().filePath(fileName));
+    });
+    auto* outputButtons = new QHBoxLayout();
+    outputButtons->addWidget(chooseButton);
+    outputButtons->addWidget(renameButton);
 
     auto* form = new QFormLayout();
     form->addRow(new QLabel("Panorama resolution"), widthSpin_);
@@ -85,7 +103,7 @@ ExportDialog::ExportDialog(double durationSeconds, double sourceFps,
     form->addRow(rotateAudioCheck_);
     form->addRow(new QLabel("Stabilization smoothness"), smoothSpin_);
     form->addRow(new QLabel("Output file"), outputEdit_);
-    form->addRow(chooseButton);
+    form->addRow(outputButtons);
 
     auto* buttons = new QDialogButtonBox(QDialogButtonBox::Ok | QDialogButtonBox::Cancel,
                                          this);
