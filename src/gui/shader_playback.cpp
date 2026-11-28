@@ -125,7 +125,6 @@ void ShaderPlayback::seek(double seconds) {
     if (path_.isEmpty()) return;
     position_ = std::clamp(seconds, 0.0, duration_);
     lastDisplayedTime_ = -1.0;
-    frameCount_ = 0;
     startDecoder(position_);
     emit positionChanged(position_);
 }

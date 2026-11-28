@@ -6,6 +6,7 @@
 #include <opencv2/imgproc.hpp>
 
 #include <algorithm>
+#include <atomic>
 #include <fstream>
 #include <vector>
 
@@ -99,11 +100,17 @@ bool openSoftwareDecoder(DecoderState& state, const AVCodec* codec,
 
 void releaseDecoder(DecoderState& state);
 
+// A decoder that opens but fails on its first frame means no hardware path is
+// usable here. Remember it so later preview opens and seeks go straight to
+// software instead of repeating the same driver errors for every frame.
+std::atomic<bool> hardwareDecodeUnavailable{false};
+
 // A hardware decoder can open successfully but fail on the first real frame.
 // In that case drop it and continue on the CPU instead of repeating the error.
 bool fallbackToSoftware(DecoderState& state, const AVCodec* codec,
                         AVCodecParameters* parameters) {
     if (!state.hardware) return false;
+    hardwareDecodeUnavailable = true;
     releaseDecoder(state);
     return openSoftwareDecoder(state, codec, parameters);
 }
@@ -111,6 +118,8 @@ bool fallbackToSoftware(DecoderState& state, const AVCodec* codec,
 // Tries the preferred backend, then the other hardware paths, then software.
 bool openBestDecoder(DecoderState& state, const AVCodec* codec,
                      AVCodecParameters* parameters, DecodeBackend preferred) {
+    if (hardwareDecodeUnavailable)
+        return openSoftwareDecoder(state, codec, parameters);
     const DecodeBackend candidates[] = {preferred, DecodeBackend::Qsv,
                                         DecodeBackend::Vaapi, DecodeBackend::Cuda};
     for (size_t i = 0; i < sizeof(candidates) / sizeof(candidates[0]); ++i) {

@@ -63,8 +63,8 @@ ShaderViewer::ShaderViewer(QWidget* parent) : QOpenGLWidget(parent) {}
 
 ShaderViewer::~ShaderViewer() {
     makeCurrent();
-    for (QOpenGLTexture* texture : textures_) delete texture;
-    textures_.clear();
+    delete texture_;
+    texture_ = nullptr;
     doneCurrent();
 }
 
@@ -96,16 +96,15 @@ void ShaderViewer::initializeGL() {
 
 void ShaderViewer::uploadFrame() {
     if (pendingImage_.isNull()) return;
-    // Constructing the texture from QImage is the upload path that works with
-    // every Qt/GL combination here, including Wayland ES contexts.
-    for (QOpenGLTexture* texture : textures_) delete texture;
-    textures_.clear();
-    auto* texture = new QOpenGLTexture(pendingImage_,
-                                       QOpenGLTexture::GenerateMipMaps);
-    texture->setMinificationFilter(QOpenGLTexture::LinearMipMapLinear);
-    texture->setMagnificationFilter(QOpenGLTexture::Linear);
-    texture->setWrapMode(QOpenGLTexture::ClampToEdge);
-    textures_.push_back(texture);
+    // Keep one texture alive and replace only its pixels. Reallocating a
+    // texture on every frame stalls the preview on integrated GPUs.
+    if (!texture_) {
+        texture_ = new QOpenGLTexture(QOpenGLTexture::Target2D);
+        texture_->setMinificationFilter(QOpenGLTexture::Linear);
+        texture_->setMagnificationFilter(QOpenGLTexture::Linear);
+        texture_->setWrapMode(QOpenGLTexture::ClampToEdge);
+    }
+    texture_->setData(pendingImage_, QOpenGLTexture::DontGenerateMipMaps);
     pendingImage_ = QImage();
     hasFrame_ = true;
 }
@@ -137,9 +136,9 @@ void ShaderViewer::paintGL() {
     glClear(GL_COLOR_BUFFER_BIT);
     if (!glReady_) return;
     if (!pendingImage_.isNull()) uploadFrame();
-    if (!hasFrame_ || textures_.empty()) return;
+    if (!hasFrame_ || !texture_) return;
     program_.bind();
-    textures_.front()->bind(0);
+    texture_->bind(0);
     vao_.bind();
     updateUniforms();
     glDrawArrays(GL_TRIANGLE_STRIP, 0, 4);

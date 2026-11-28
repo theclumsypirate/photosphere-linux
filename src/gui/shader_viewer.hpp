@@ -7,7 +7,6 @@
 #include <QOpenGLVertexArrayObject>
 #include <QOpenGLWidget>
 #include <QPoint>
-#include <QVector>
 
 #include <opencv2/core.hpp>
 
@@ -42,7 +41,7 @@ private:
     bool glReady_ = false;
     QImage pendingImage_;
     QOpenGLShaderProgram program_;
-    QVector<QOpenGLTexture*> textures_;
+    QOpenGLTexture* texture_ = nullptr;
     QOpenGLVertexArrayObject vao_;
     unsigned int vbo_ = 0;
     QPoint lastPos_;
