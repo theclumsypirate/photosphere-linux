@@ -23,6 +23,7 @@
 #include <QRadioButton>
 #include <QSettings>
 #include <QStandardPaths>
+#include <QWheelEvent>
 #include <QSlider>
 #include <QTimer>
 #include <QVBoxLayout>
@@ -138,7 +139,7 @@ void MultiCameraDialog::build() {
     });
 
     fov_ = new QSlider(Qt::Horizontal, this);
-    fov_->setRange(20, 120);
+    fov_->setRange(15, 120);
     fov_->setValue(static_cast<int>(camera_[0].fov));
     connect(fov_, &QSlider::valueChanged, this, [this](int value) {
         camera_[selected_].fov = value;
@@ -208,7 +209,7 @@ void MultiCameraDialog::preview() {
                            static_cast<qsizetype>(image.step),
                            QImage::Format_BGR888).copy();
     previewLabel_->setPixmap(QPixmap::fromImage(previewImage_));
-    statusLabel_->setText(QString("Editing panorama %1 - drag to aim, wheel not used here")
+    statusLabel_->setText(QString("Editing panorama %1 - drag to aim, wheel to zoom")
                               .arg(selected_ + 1));
 }
 
@@ -271,13 +272,24 @@ void MultiCameraDialog::mousePressEvent(QMouseEvent* event) {
 void MultiCameraDialog::mouseMoveEvent(QMouseEvent* event) {
     if (event->buttons() & Qt::LeftButton && previewLabel_->geometry().contains(event->pos())) {
         const QPoint delta = event->pos() - lastPos_;
-        camera_[selected_].yaw -= delta.x() * 0.35;
-        camera_[selected_].pitch = std::clamp(camera_[selected_].pitch +
-                                              delta.y() * 0.35, -89.0, 89.0);
+        // Same speed and direction as the main panorama viewer. The core
+        // CameraPose is inverted in pitch, hence the minus sign.
+        camera_[selected_].yaw -= delta.x() * 0.3;
+        camera_[selected_].pitch = std::clamp(camera_[selected_].pitch -
+                                              delta.y() * 0.3, -89.0, 89.0);
         lastPos_ = event->pos();
         schedulePreview();
     }
     QDialog::mouseMoveEvent(event);
+}
+
+void MultiCameraDialog::wheelEvent(QWheelEvent* event) {
+    const int steps = event->angleDelta().y() / 120;
+    double fov = std::clamp(camera_[selected_].fov + steps * 5.0,
+                            15.0, 120.0);
+    camera_[selected_].fov = fov;
+    fov_->setValue(static_cast<int>(fov));
+    schedulePreview();
 }
 
 } // namespace ps::gui

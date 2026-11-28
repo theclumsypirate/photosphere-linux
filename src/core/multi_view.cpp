@@ -18,8 +18,9 @@ cv::Mat renderVirtualView(const cv::Mat& equirect, const VirtualCamera& camera,
     const CameraBasis basis = basisFromPose(
         CameraPose{camera.yawDegrees, camera.pitchDegrees, 0.0,
                    rotation::identity(), false});
-    const double tanX = std::tan(camera.fovDegrees * kPi / 360.0);
-    const double tanY = tanX * height / width;
+    // The main viewer uses a vertical field of view, like QMatrix4x4::perspective.
+    const double tanY = std::tan(camera.fovDegrees * kPi / 360.0);
+    const double tanX = tanY * width / height;
     const double rx = basis.right[0], ry = basis.right[1], rz = basis.right[2];
     const double ux = basis.up[0], uy = basis.up[1], uz = basis.up[2];
     const double fx = basis.forward[0], fy = basis.forward[1], fz = basis.forward[2];
@@ -39,9 +40,13 @@ cv::Mat renderVirtualView(const cv::Mat& equirect, const VirtualCamera& camera,
         auto* my = mapY.ptr<float>(row);
         for (int col = 0; col < width; ++col) {
             const double cx = xStart + xStep * col;
-            const double dx = cx * rx + cy * ux + fx;
-            const double dy = cx * ry + cy * uy + fy;
-            const double dz = cx * rz + cy * uz + fz;
+            double dx = cx * rx + cy * ux + fx;
+            double dy = cx * ry + cy * uy + fy;
+            double dz = cx * rz + cy * uz + fz;
+            const double length = std::sqrt(dx * dx + dy * dy + dz * dz);
+            dx /= length;
+            dy /= length;
+            dz /= length;
             const double lon = std::atan2(dx, dy) * 180.0 / kPi;
             const double lat = std::asin(std::clamp(dz, -1.0, 1.0)) * 180.0 / kPi;
             mx[col] = static_cast<float>(lon * lonScale) + xOffset;
