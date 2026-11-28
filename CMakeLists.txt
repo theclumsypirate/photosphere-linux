@@ -106,6 +106,10 @@ if(PS_BUILD_GUI)
   find_package(Qt6 REQUIRED COMPONENTS Widgets OpenGLWidgets Network)
   if(COMMAND qt_standard_project_setup)
     qt_standard_project_setup()
+  else()
+    set(CMAKE_AUTOMOC ON)
+    set(CMAKE_AUTOUIC ON)
+    set(CMAKE_AUTORCC ON)
   endif()
   qt_add_executable(photosphere-gui
     src/gui/main.cpp
