@@ -2,6 +2,7 @@
 
 #include <QIcon>
 #include <QMouseEvent>
+#include <QOpenGLContext>
 #include <QResizeEvent>
 #include <QSignalBlocker>
 #include <QWheelEvent>
@@ -107,6 +108,7 @@ ViewerWidget::ViewerWidget(QWidget* parent) : QOpenGLWidget(parent) {
 }
 
 ViewerWidget::~ViewerWidget() {
+    if (!context() || !context()->isValid()) return;
     makeCurrent();
     vao_.destroy();
     if (vbo_) glDeleteBuffers(1, &vbo_);
@@ -285,7 +287,12 @@ void ViewerWidget::mouseMoveEvent(QMouseEvent* event) {
 }
 
 void ViewerWidget::resizeEvent(QResizeEvent* event) {
-    QOpenGLWidget::resizeEvent(event);
+    // During embedding/show, Qt can deliver a resize before the GL context is
+    // created. Calling the base then dereferences null context functions.
+    if (context() && context()->isValid())
+        QOpenGLWidget::resizeEvent(event);
+    else
+        QWidget::resizeEvent(event);
     if (snapshotButton_)
         snapshotButton_->move(width() - 132, height() - 52);
     if (savePanoButton_)
