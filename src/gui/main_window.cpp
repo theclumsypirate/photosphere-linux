@@ -452,6 +452,21 @@ void MainWindow::addFiles() {
     addPaths(files);
 }
 
+MainWindow::~MainWindow() {
+    stitchCancel_ = true;
+    exportCancel_ = true;
+    auto stop = [](QThread*& thread) {
+        if (!thread) return;
+        thread->quit();
+        if (!thread->wait(3000)) {
+            thread->terminate();
+            thread->wait(1000);
+        }
+    };
+    stop(stitchThread_);
+    stop(exportThread_);
+}
+
 void MainWindow::addPaths(const QStringList& paths) {
     const QStringList filters{"*.dng", "*.jpg", "*.jpeg", "*.png",
                               "*.insv", "*.mp4", "*.mov", "*.mkv"};

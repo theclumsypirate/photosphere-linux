@@ -28,6 +28,7 @@ class MainWindow : public QMainWindow {
 
 public:
     explicit MainWindow(QWidget* parent = nullptr);
+    ~MainWindow() override;
 
 public slots:
     void addPaths(const QStringList& paths);
