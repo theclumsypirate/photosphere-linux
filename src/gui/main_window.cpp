@@ -749,6 +749,43 @@ void MainWindow::renderVideo() {
     if (dialogOptions.output.isEmpty()) return;
     if (!confirmHighResolution(this, dialogOptions.width)) return;
 
+    if (needsStitch) {
+        QApplication::processEvents();
+        QApplication::setOverrideCursor(Qt::WaitCursor);
+        io::InputSession session;
+        std::string stitchError;
+        const bool loaded = io::loadInputs({videoPath}, session, stitchError, 1);
+        Panorama firstFrame;
+        if (loaded) {
+            StitchOptions stitch;
+            stitch.width = std::min(widthSpin_->value(), 2048);
+            stitch.fisheyeFovDegrees = fovSpin_->value();
+            stitch.multiband = false;
+            stitch.flipLenses = autoFlipFor(videoPath);
+            if (flipCombo_->currentIndex() == 1) stitch.flipLenses = true;
+            if (flipCombo_->currentIndex() == 2) stitch.flipLenses = false;
+            std::string diagnostics;
+            firstFrame = stitchSession(session, stitch, diagnostics);
+        }
+        QApplication::restoreOverrideCursor();
+        if (firstFrame.equirect.empty()) {
+            QMessageBox::warning(this, "Stitch failed",
+                                 QString::fromStdString(stitchError));
+            return;
+        }
+        // Show the result on the main viewer, never in another window.
+        panorama_ = firstFrame.equirect;
+        viewer_->setPanorama(panorama_);
+        viewer_->resetView();
+        setStatus("Stitched the first video frame");
+        QApplication::processEvents();
+        QMessageBox::information(
+            this, "Video stitched",
+            "Only one photo (the first video frame) was stitched and is now "
+            "shown in the main viewer. The whole video will be stitched "
+            "during export.");
+    }
+
     VideoExportWorker::Options options;
     options.input = videoPath;
     options.output = dialogOptions.output.toStdString();
