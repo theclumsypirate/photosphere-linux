@@ -32,6 +32,7 @@ add_library(ps_core
   src/core/eac.cpp
   src/core/seam.cpp
   src/core/seam_carving.cpp
+  src/core/shader_preview.cpp
   src/core/blender.cpp
   src/core/pose_refiner.cpp
   src/core/stabilize.cpp

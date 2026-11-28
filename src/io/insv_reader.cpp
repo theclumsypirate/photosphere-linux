@@ -563,4 +563,133 @@ bool readInsv(const std::string& path, std::vector<LensFrame>& out,
 #endif
 }
 
+bool streamInsvSequential(const std::string& path, double fromSeconds,
+                          const InsvFrameCallback& callback,
+                          std::string& error, int scaleWidth) {
+#ifndef PS_HAVE_FFMPEG
+    (void)path; (void)fromSeconds; (void)callback;
+    error = "built without libav: INSV input is disabled";
+    return false;
+#else
+    AVFormatContext* ctx = nullptr;
+    if (avformat_open_input(&ctx, path.c_str(), nullptr, nullptr) < 0) {
+        error = "cannot open video container";
+        return false;
+    }
+    if (avformat_find_stream_info(ctx, nullptr) < 0) {
+        error = "cannot read video streams";
+        avformat_close_input(&ctx);
+        return false;
+    }
+    std::vector<int> streams;
+    for (unsigned i = 0; i < ctx->nb_streams; ++i)
+        if (ctx->streams[i]->codecpar->codec_type == AVMEDIA_TYPE_VIDEO)
+            streams.push_back(static_cast<int>(i));
+    if (streams.empty()) {
+        error = "no video track in container";
+        avformat_close_input(&ctx);
+        return false;
+    }
+    const DecodeBackend backend = detectGpu().preferredDecodeBackend();
+    std::vector<DecoderState> decoders(streams.size());
+    for (size_t k = 0; k < streams.size(); ++k) {
+        const AVCodec* codec = avcodec_find_decoder(
+            ctx->streams[streams[k]]->codecpar->codec_id);
+        if (!codec) { error = "missing video decoder"; break; }
+        if (!openHardwareDecoder(decoders[k], codec,
+                                 ctx->streams[streams[k]]->codecpar, backend) &&
+            !openSoftwareDecoder(decoders[k], codec,
+                                 ctx->streams[streams[k]]->codecpar)) {
+            error = "cannot initialise video decoder";
+            break;
+        }
+    }
+    if (!error.empty()) {
+        for (auto& d : decoders) releaseDecoder(d);
+        avformat_close_input(&ctx);
+        return false;
+    }
+    if (fromSeconds > 0.0) {
+        av_seek_frame(ctx, -1, static_cast<int64_t>(fromSeconds * AV_TIME_BASE),
+                      AVSEEK_FLAG_BACKWARD);
+        for (auto& d : decoders) avcodec_flush_buffers(d.codec);
+    }
+    const bool twoTracks = streams.size() >= 2;
+    std::vector<LensFrame> pending(2);
+    std::vector<bool> ready(2, false);
+    AVPacket* packet = av_packet_alloc();
+    AVFrame* frame = av_frame_alloc();
+    AVFrame* scratch = av_frame_alloc();
+    bool keepGoing = true;
+    while (keepGoing && av_read_frame(ctx, packet) >= 0) {
+        auto it = std::find(streams.begin(), streams.end(), packet->stream_index);
+        if (it == streams.end()) { av_packet_unref(packet); continue; }
+        const size_t lens = static_cast<size_t>(it - streams.begin());
+        if (lens >= decoders.size()) { av_packet_unref(packet); continue; }
+        DecoderState& decoder = decoders[lens];
+        if (avcodec_send_packet(decoder.codec, packet) < 0) {
+            av_packet_unref(packet);
+            continue;
+        }
+        int received = 0;
+        while (keepGoing &&
+               (received = avcodec_receive_frame(decoder.codec, frame)) == 0) {
+            AVFrame* cpu = cpuFrame(frame, scratch, decoder.hwFormat);
+            const int sourceWidth = cpu->width, sourceHeight = cpu->height;
+            const int w = scaleWidth > 0 ? scaleWidth : sourceWidth;
+            const int h = scaleWidth > 0 ? scaleWidth : sourceHeight;
+            cv::Mat bgr(h, w, CV_8UC3);
+            if (!decoder.sws) {
+                const auto source = static_cast<AVPixelFormat>(cpu->format);
+                decoder.sws = sws_getContext(sourceWidth, sourceHeight,
+                                             softwarePixelFormat(source),
+                                             w, h, AV_PIX_FMT_BGR24, SWS_BILINEAR,
+                                             nullptr, nullptr, nullptr);
+                applyFullRange(decoder.sws, isFullRange(source));
+            }
+            uint8_t* dst[] = {bgr.data};
+            int line[] = {static_cast<int>(bgr.step)};
+            sws_scale(decoder.sws, cpu->data, cpu->linesize, 0, sourceHeight,
+                      dst, line);
+            const double ts = static_cast<double>(frame->best_effort_timestamp) *
+                              av_q2d(ctx->streams[packet->stream_index]->time_base);
+            auto emit = [&](int index, const cv::Mat& image) {
+                pending[index].image = image.clone();
+                pending[index].lens = index;
+                pending[index].source = path;
+                pending[index].timestamp = ts;
+                ready[index] = true;
+            };
+            if (twoTracks) {
+                emit(static_cast<int>(lens), bgr);
+            } else if (bgr.cols >= 2 * bgr.rows) {
+                const int half = bgr.cols / 2;
+                emit(0, bgr(cv::Rect(0, 0, half, bgr.rows)));
+                emit(1, bgr(cv::Rect(half, 0, half, bgr.rows)));
+            } else if (bgr.rows >= 2 * bgr.cols) {
+                const int half = bgr.rows / 2;
+                emit(0, bgr(cv::Rect(0, 0, bgr.cols, half)));
+                emit(1, bgr(cv::Rect(0, half, bgr.cols, half)));
+            } else {
+                emit(0, bgr);
+                ready[1] = true;
+            }
+            av_frame_unref(frame);
+            if (ready[0] && ready[1]) {
+                std::vector<LensFrame> pair{pending[0], pending[1]};
+                keepGoing = callback(pair);
+                ready[0] = ready[1] = false;
+            }
+        }
+        av_packet_unref(packet);
+    }
+    av_frame_free(&frame);
+    av_frame_free(&scratch);
+    av_packet_free(&packet);
+    for (auto& d : decoders) releaseDecoder(d);
+    avformat_close_input(&ctx);
+    return true;
+#endif
+}
+
 } // namespace ps::io

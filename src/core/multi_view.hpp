@@ -20,6 +20,14 @@ cv::Mat renderSplitView(const cv::Mat& equirect, const VirtualCamera& a,
                         const VirtualCamera& b, int width, int height);
 cv::Mat renderPipView(const cv::Mat& equirect, const VirtualCamera& main,
                       const VirtualCamera& inset, int width, int height,
-                      double insetFraction = 0.35);
+                      double insetFraction = 0.22);
+
+// Two different panoramas, one per virtual camera.
+cv::Mat renderSplitView(const cv::Mat& first, const VirtualCamera& a,
+                        const cv::Mat& second, const VirtualCamera& b,
+                        int width, int height);
+cv::Mat renderPipView(const cv::Mat& first, const VirtualCamera& main,
+                      const cv::Mat& second, const VirtualCamera& inset,
+                      int width, int height, double insetFraction = 0.22);
 
 } // namespace ps

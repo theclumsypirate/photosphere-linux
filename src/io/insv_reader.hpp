@@ -41,4 +41,10 @@ using InsvFrameCallback = std::function<bool(const std::vector<LensFrame>&)>;
 bool streamInsvAtTimes(const std::string& path, const std::vector<double>& times,
                        const InsvFrameCallback& callback, std::string& error);
 
+// Sequential playback decode: reads packets in file order with a single seek
+// at the start, so the first frame arrives as fast as a media player's.
+bool streamInsvSequential(const std::string& path, double fromSeconds,
+                          const InsvFrameCallback& callback, std::string& error,
+                          int scaleWidth = 0);
+
 } // namespace ps::io

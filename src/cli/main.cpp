@@ -1,6 +1,7 @@
 #include "core/gpano.hpp"
 #include "core/gpu_info.hpp"
 #include "core/little_planet.hpp"
+#include "core/shader_preview.hpp"
 #include "core/stabilize.hpp"
 #include "core/stitcher.hpp"
 #include "io/exif_pose.hpp"
@@ -37,6 +38,8 @@ void usage() {
               << "  stitch    -o OUT.jpg [-w WIDTH] [--fov DEG] [--flip|--no-flip]\n"
               << "            [--no-multiband] [--max-frames N] INPUT...\n"
               << "  gyro      -i VIDEO.insv       show IMU telemetry from the trailer\n"
+               << "  preview   -i VIDEO -o OUT.jpg [-t SEC] [-w W] [--yaw DEG] [--pitch DEG]\n"
+               << "            [--fov DEG] [--lens-fov DEG]  GPU viewer preview on CPU\n"
                << "  inspect   INPUT...\n"
               << "  extract   -i VIDEO.insv -o DIR [--max N] [--step N]\n"
               << "  auto      -o DIR INPUT... [-w WIDTH] [--fov DEG]\n"
@@ -423,6 +426,48 @@ bool cmdAuto(int argc, char** argv) {
     return true;
 }
 
+bool cmdPreview(int argc, char** argv) {
+    const std::string input = optionValue(argc, argv, "-i");
+    const std::string output = optionValue(argc, argv, "-o");
+    if (input.empty() || output.empty()) {
+        std::cerr << "preview: need -i VIDEO -o OUT.jpg\n";
+        return false;
+    }
+    const double at = numberOption(argc, argv, "-t", 0.0);
+    std::vector<ps::LensFrame> frames;
+    std::string error;
+    if (!ps::io::readInsvAtTimes(input, {at}, frames, error)) {
+        std::cerr << "preview: " << error << "\n";
+        return false;
+    }
+    cv::Mat sideBySide;
+    if (frames.size() >= 2 && frames[0].lens != frames[1].lens) {
+        cv::Mat a = frames[0].image, b = frames[1].image;
+        cv::resize(a, a, cv::Size(512, 512), 0, 0, cv::INTER_AREA);
+        cv::resize(b, b, cv::Size(512, 512), 0, 0, cv::INTER_AREA);
+        cv::hconcat(a, b, sideBySide);
+    } else if (!frames.empty()) {
+        sideBySide = frames[0].image;
+    }
+    if (sideBySide.empty()) {
+        std::cerr << "preview: no frame at " << at << "s\n";
+        return false;
+    }
+    const int width = static_cast<int>(numberOption(argc, argv, "-w", 1024));
+    const cv::Mat view = ps::renderFisheyeView(
+        sideBySide, numberOption(argc, argv, "--yaw", 0.0),
+        numberOption(argc, argv, "--pitch", 0.0),
+        numberOption(argc, argv, "--fov", 90.0),
+        numberOption(argc, argv, "--lens-fov", 195.0),
+        width, width / 2);
+    if (view.empty() || !cv::imwrite(output, view)) {
+        std::cerr << "preview: cannot write " << output << "\n";
+        return false;
+    }
+    std::cout << "Wrote GPU viewer preview " << output << " (t=" << at << "s)\n";
+    return true;
+}
+
 bool cmdGyro(int argc, char** argv) {
     const std::string input = optionValue(argc, argv, "-i");
     if (input.empty()) {
@@ -573,6 +618,7 @@ int main(int argc, char** argv) {
     if (command == "stitch") return cmdStitch(argc, argv) ? 0 : 2;
     if (command == "inspect") return cmdInspect(argc, argv) ? 0 : 2;
     if (command == "gyro") return cmdGyro(argc, argv) ? 0 : 2;
+    if (command == "preview") return cmdPreview(argc, argv) ? 0 : 2;
     if (command == "extract") return cmdExtract(argc, argv) ? 0 : 2;
     if (command == "batch") return cmdBatch(argc, argv) ? 0 : 2;
     if (command == "auto") return cmdAuto(argc, argv) ? 0 : 2;

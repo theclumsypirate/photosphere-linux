@@ -1,11 +1,13 @@
 #pragma once
 
+#include <QImage>
 #include <QOpenGLFunctions>
 #include <QOpenGLShaderProgram>
 #include <QOpenGLTexture>
 #include <QOpenGLVertexArrayObject>
 #include <QOpenGLWidget>
 #include <QPoint>
+#include <QVector>
 
 #include <opencv2/core.hpp>
 
@@ -23,11 +25,11 @@ public:
 
 public slots:
     void setFrame(const cv::Mat& sideBySide);
+    void setLensFov(double degrees) { lensFov_ = static_cast<float>(degrees); }
     void resetView();
 
 protected:
     void initializeGL() override;
-    void resizeGL(int w, int h) override;
     void paintGL() override;
     void mousePressEvent(QMouseEvent* event) override;
     void mouseMoveEvent(QMouseEvent* event) override;
@@ -35,9 +37,12 @@ protected:
 
 private:
     void updateUniforms();
+    void uploadFrame();
 
+    bool glReady_ = false;
+    QImage pendingImage_;
     QOpenGLShaderProgram program_;
-    QOpenGLTexture texture_{QOpenGLTexture::Target2D};
+    QVector<QOpenGLTexture*> textures_;
     QOpenGLVertexArrayObject vao_;
     unsigned int vbo_ = 0;
     QPoint lastPos_;

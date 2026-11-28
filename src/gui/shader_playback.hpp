@@ -17,8 +17,9 @@ class QTimer;
 
 namespace ps::gui {
 
-// Decodes a video in a background thread and feeds the GPU viewer at up to
-// 60 frames per second. A small bounded queue keeps memory usage low.
+// Sequential playback decode feeding the GPU viewer. The decoder scales each
+// lens straight to the texture size, so no full-resolution frame is ever
+// allocated in the GUI thread.
 class ShaderPlayback : public QObject {
     Q_OBJECT
 
@@ -52,8 +53,6 @@ private:
         std::mutex mutex;
         std::condition_variable cv;
         std::deque<std::pair<double, cv::Mat>> frames;
-        std::vector<double> times;
-        size_t nextTime = 0;
         bool stop = false;
         bool finished = false;
         QString error;
@@ -67,6 +66,7 @@ private:
     double duration_ = 0.0;
     double position_ = 0.0;
     bool playing_ = false;
+    int frameCount_ = 0;
     double lastDisplayedTime_ = -1.0;
 };
 

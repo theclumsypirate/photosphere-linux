@@ -36,6 +36,7 @@ private:
     QPushButton* playButton_ = nullptr;
     QSlider* slider_ = nullptr;
     QLabel* timeLabel_ = nullptr;
+    QLabel* statusLabel_ = nullptr;
     bool scrubbing_ = false;
 };
 

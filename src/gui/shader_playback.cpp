@@ -8,21 +8,11 @@
 
 #include <algorithm>
 #include <cmath>
+#include <cstdio>
 #include <string>
 
 namespace ps::gui {
 namespace {
-
-cv::Mat squareFisheye(const cv::Mat& source) {
-    if (source.empty()) return {};
-    const int side = std::min(source.cols, source.rows);
-    const cv::Rect crop((source.cols - side) / 2, (source.rows - side) / 2,
-                        side, side);
-    cv::Mat result;
-    cv::resize(source(crop), result, cv::Size(512, 512), 0, 0,
-               cv::INTER_AREA);
-    return result;
-}
 
 cv::Mat makeSideBySide(const std::vector<LensFrame>& frames) {
     if (frames.empty()) return {};
@@ -37,11 +27,9 @@ cv::Mat makeSideBySide(const std::vector<LensFrame>& frames) {
     } else {
         return {};
     }
-    const cv::Mat a = squareFisheye(left);
-    const cv::Mat b = squareFisheye(right);
-    if (a.empty() || b.empty()) return {};
+    if (left.empty() || right.empty()) return {};
     cv::Mat out;
-    cv::hconcat(a, b, out);
+    cv::hconcat(left, right, out);
     return out;
 }
 
@@ -53,9 +41,7 @@ ShaderPlayback::ShaderPlayback(QObject* parent) : QObject(parent) {
     connect(timer_, &QTimer::timeout, this, &ShaderPlayback::tick);
 }
 
-ShaderPlayback::~ShaderPlayback() {
-    close();
-}
+ShaderPlayback::~ShaderPlayback() { close(); }
 
 bool ShaderPlayback::open(const QString& path, QString& error) {
     close();
@@ -69,7 +55,9 @@ bool ShaderPlayback::open(const QString& path, QString& error) {
     }
     position_ = 0.0;
     lastDisplayedTime_ = -1.0;
+    frameCount_ = 0;
     startDecoder(0.0);
+    timer_->start();
     return true;
 }
 
@@ -78,42 +66,31 @@ void ShaderPlayback::startDecoder(double fromSeconds) {
     auto shared = std::make_shared<Queue>();
     queue_ = shared;
     const QString path = path_;
-    const double fps = fps_;
-    const double duration = duration_;
-    double start = std::clamp(fromSeconds, 0.0, duration);
-    shared->times.clear();
-    for (double t = start; t < duration; t += 1.0 / fps)
-        shared->times.push_back(t);
-    if (shared->times.empty()) shared->times.push_back(start);
-    worker_ = std::thread([shared, path, start]() {
+    double start = std::clamp(fromSeconds, 0.0, duration_);
+    worker_ = std::thread([shared, path, start, this]() {
         std::string error;
-        const bool ok = io::streamInsvAtTimes(
-            path.toStdString(), shared->times,
-            [shared, start](const std::vector<LensFrame>& frames) {
+        const bool ok = io::streamInsvSequential(
+            path.toStdString(), start,
+            [shared, start, this](const std::vector<LensFrame>& frames) {
                 cv::Mat image = makeSideBySide(frames);
                 if (image.empty()) return true;
-                std::unique_lock<std::mutex> lock(shared->mutex);
-                shared->cv.wait(lock, [shared]() {
-                    return shared->frames.size() < 24 || shared->stop;
-                });
+                std::lock_guard<std::mutex> lock(shared->mutex);
                 if (shared->stop) return false;
-                const size_t index = shared->nextTime++;
-                shared->frames.emplace_back(
-                    index < shared->times.size() ? shared->times[index] : start,
-                    image);
-                shared->cv.notify_one();
+                // Keep the freshest frames only, so playback never lags.
+                if (shared->frames.size() >= 4) shared->frames.pop_front();
+                shared->frames.emplace_back(frames[0].timestamp - start, image);
                 return true;
             },
-            error);
+            error, 512);
         {
             std::lock_guard<std::mutex> lock(shared->mutex);
             shared->finished = true;
-            shared->cv.notify_all();
         }
         if (!ok && error.find("cancel") == std::string::npos) {
             std::lock_guard<std::mutex> lock(shared->mutex);
             shared->error = QString::fromStdString(error);
         }
+        (void)this;
     });
 }
 
@@ -122,14 +99,14 @@ void ShaderPlayback::stopDecoder() {
     {
         std::lock_guard<std::mutex> lock(queue_->mutex);
         queue_->stop = true;
-        queue_->cv.notify_all();
     }
     if (worker_.joinable()) worker_.join();
     queue_.reset();
 }
 
 void ShaderPlayback::close() {
-    pause();
+    playing_ = false;
+    timer_->stop();
     stopDecoder();
     path_.clear();
     duration_ = 0.0;
@@ -142,23 +119,22 @@ void ShaderPlayback::play() {
     timer_->start();
 }
 
-void ShaderPlayback::pause() {
-    playing_ = false;
-    timer_->stop();
-}
+void ShaderPlayback::pause() { playing_ = false; }
 
 void ShaderPlayback::seek(double seconds) {
     if (path_.isEmpty()) return;
     position_ = std::clamp(seconds, 0.0, duration_);
     lastDisplayedTime_ = -1.0;
+    frameCount_ = 0;
     startDecoder(position_);
     emit positionChanged(position_);
 }
 
 void ShaderPlayback::tick() {
-    if (!playing_) return;
-    position_ = std::min(duration_, position_ + 1.0 / 60.0);
+    if (playing_) position_ = std::min(duration_, position_ + 1.0 / 60.0);
     if (!queue_) return;
+    cv::Mat frame;
+    double frameTime = lastDisplayedTime_;
     {
         std::lock_guard<std::mutex> lock(queue_->mutex);
         if (!queue_->error.isEmpty()) {
@@ -166,21 +142,18 @@ void ShaderPlayback::tick() {
             queue_->error.clear();
             emit failed(message);
         }
-    }
-    cv::Mat frame;
-    double frameTime = lastDisplayedTime_;
-    {
-        std::lock_guard<std::mutex> lock(queue_->mutex);
         while (!queue_->frames.empty() &&
-               queue_->frames.front().first <= position_) {
+               queue_->frames.front().first <= position_ + 0.05) {
             frameTime = queue_->frames.front().first;
             frame = queue_->frames.front().second;
             queue_->frames.pop_front();
-            queue_->cv.notify_one();
         }
     }
-    if (!frame.empty() && frameTime > lastDisplayedTime_) {
+    if (!frame.empty()) {
         lastDisplayedTime_ = frameTime;
+        if (frameCount_++ == 0)
+            std::fprintf(stderr, "GPU preview: first frame %dx%d\n",
+                         frame.cols, frame.rows);
         emit frameReady(frame);
     }
     emit positionChanged(position_);

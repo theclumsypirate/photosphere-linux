@@ -874,9 +874,12 @@ void MainWindow::openShaderPreview() {
     for (const auto& path : inputPaths())
         if (io::isVideoFile(path)) { videoPath = path; break; }
     if (videoPath.empty()) {
-        QMessageBox::warning(this, "No video", "Add a video first.");
-        return;
+        videoPath = QFileDialog::getOpenFileName(
+            this, "Choose a 360 video", lastDir(),
+            "360 video (*.insv *.mp4 *.mov *.mkv);;All files (*)")
+                        .toStdString();
     }
+    if (videoPath.empty()) return;
     if (io::isEacVideo(videoPath)) {
         QMessageBox::information(this, "GPU preview",
                                  "GoPro EAC files are already stitched. Use the "
