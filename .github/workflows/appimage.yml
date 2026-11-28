@@ -9,10 +9,10 @@ on:
         default: "1.0.1"
         type: string
       tag:
-        description: "Create and push a git tag for this version"
+        description: "Git tag to create and push, e.g. linux-v1.0.1 (empty = none)"
         required: false
-        default: false
-        type: boolean
+        default: "linux-v1.0.1"
+        type: string
 
 jobs:
   appimage:
@@ -104,14 +104,14 @@ jobs:
         run: ./linuxdeploy.AppImage --appdir AppDir --output appimage
 
       - name: Create tag
-        if: ${{ inputs.tag }}
+        if: ${{ inputs.tag != '' }}
         env:
-          VERSION: ${{ inputs.version }}
+          TAG: ${{ inputs.tag }}
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git tag -a "v${VERSION}" -m "Release v${VERSION}"
-          git push origin "v${VERSION}"
+          git tag -a "${TAG}" -m "Release ${TAG}"
+          git push origin "${TAG}"
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4
