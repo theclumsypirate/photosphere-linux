@@ -63,8 +63,8 @@ ShaderViewer::ShaderViewer(QWidget* parent) : QOpenGLWidget(parent) {}
 
 ShaderViewer::~ShaderViewer() {
     makeCurrent();
-    delete texture_;
-    texture_ = nullptr;
+    for (QOpenGLTexture* texture : textures_) delete texture;
+    textures_.clear();
     doneCurrent();
 }
 
@@ -96,22 +96,16 @@ void ShaderViewer::initializeGL() {
 
 void ShaderViewer::uploadFrame() {
     if (pendingImage_.isNull()) return;
-    const int w = pendingImage_.width();
-    const int h = pendingImage_.height();
-    // Allocate storage once and only replace pixels afterwards. Calling
-    // setData(QImage) repeatedly tries to resize the texture and logs warnings.
-    if (!texture_ || texture_->width() != w || texture_->height() != h) {
-        delete texture_;
-        texture_ = new QOpenGLTexture(QOpenGLTexture::Target2D);
-        texture_->setSize(w, h);
-        texture_->setFormat(QOpenGLTexture::RGB8_UNorm);
-        texture_->setMinificationFilter(QOpenGLTexture::Linear);
-        texture_->setMagnificationFilter(QOpenGLTexture::Linear);
-        texture_->setWrapMode(QOpenGLTexture::ClampToEdge);
-        texture_->create();
-    }
-    texture_->setData(0, 0, 0, w, h, 1, QOpenGLTexture::RGB,
-                      QOpenGLTexture::UInt8, pendingImage_.constBits());
+    // Constructing the texture from QImage is the upload path that works with
+    // every Qt/GL combination here, including Wayland ES contexts.
+    for (QOpenGLTexture* texture : textures_) delete texture;
+    textures_.clear();
+    auto* texture = new QOpenGLTexture(pendingImage_,
+                                       QOpenGLTexture::GenerateMipMaps);
+    texture->setMinificationFilter(QOpenGLTexture::LinearMipMapLinear);
+    texture->setMagnificationFilter(QOpenGLTexture::Linear);
+    texture->setWrapMode(QOpenGLTexture::ClampToEdge);
+    textures_.push_back(texture);
     pendingImage_ = QImage();
     hasFrame_ = true;
 }
@@ -143,9 +137,9 @@ void ShaderViewer::paintGL() {
     glClear(GL_COLOR_BUFFER_BIT);
     if (!glReady_) return;
     if (!pendingImage_.isNull()) uploadFrame();
-    if (!hasFrame_ || !texture_) return;
+    if (!hasFrame_ || textures_.empty()) return;
     program_.bind();
-    texture_->bind(0);
+    textures_.front()->bind(0);
     vao_.bind();
     updateUniforms();
     glDrawArrays(GL_TRIANGLE_STRIP, 0, 4);
