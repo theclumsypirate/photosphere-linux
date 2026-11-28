@@ -35,6 +35,7 @@ int main(int argc, char** argv) {
     if (settings.forceX11) qputenv("QT_QPA_PLATFORM", "xcb");
     if (settings.softwareRendering) qputenv("QT_QUICK_BACKEND", "software");
     if (!settings.preferGpu) qputenv("PS_DISABLE_GPU", "1");
+    if (settings.useVulkan) qputenv("PS_USE_VULKAN", "1");
     ps::io::Mp4Writer::setPreferHardwareEncoder(settings.preferGpu);
 
     QApplication app(argc, argv);

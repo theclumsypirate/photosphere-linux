@@ -48,6 +48,7 @@ AVHWDeviceType hwDeviceType(DecodeBackend backend) {
     switch (backend) {
         case DecodeBackend::Cuda: return AV_HWDEVICE_TYPE_CUDA;
         case DecodeBackend::Qsv: return AV_HWDEVICE_TYPE_QSV;
+        case DecodeBackend::Vulkan: return AV_HWDEVICE_TYPE_VULKAN;
         default: return AV_HWDEVICE_TYPE_VAAPI;
     }
 }

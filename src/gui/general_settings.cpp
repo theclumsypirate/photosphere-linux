@@ -44,6 +44,7 @@ AppSettings loadAppSettings() {
     out.forceX11 = settings.value("forceX11", false).toBool();
     out.softwareRendering = settings.value("softwareRendering", false).toBool();
     out.preferGpu = settings.value("preferGpu", true).toBool();
+    out.useVulkan = settings.value("useVulkan", false).toBool();
     return out;
 }
 
@@ -56,6 +57,7 @@ void saveAppSettings(const AppSettings& settings) {
     store.setValue("forceX11", settings.forceX11);
     store.setValue("softwareRendering", settings.softwareRendering);
     store.setValue("preferGpu", settings.preferGpu);
+    store.setValue("useVulkan", settings.useVulkan);
     store.sync();
 }
 
@@ -89,6 +91,8 @@ GeneralSettingsDialog::GeneralSettingsDialog(QWidget* parent) : QDialog(parent) 
     softwareCheck_->setChecked(current.softwareRendering);
     gpuCheck_ = new QCheckBox("Use GPU when available (video decode and preview)", this);
     gpuCheck_->setChecked(current.preferGpu);
+    vulkanCheck_ = new QCheckBox("Use Vulkan GPU (experimental, falls back if unsupported)", this);
+    vulkanCheck_->setChecked(current.useVulkan);
 
     auto* form = new QFormLayout();
     form->addRow(new QLabel("Optional: change your default file explorer for opening"),
@@ -99,6 +103,7 @@ GeneralSettingsDialog::GeneralSettingsDialog(QWidget* parent) : QDialog(parent) 
     form->addRow(forceX11Check_);
     form->addRow(softwareCheck_);
     form->addRow(gpuCheck_);
+    form->addRow(vulkanCheck_);
 
     auto* updateLayout = new QHBoxLayout();
     auto* checkButton = new QPushButton("Check for updates", this);
@@ -135,6 +140,7 @@ AppSettings GeneralSettingsDialog::settings() const {
     out.forceX11 = forceX11Check_->isChecked();
     out.softwareRendering = softwareCheck_->isChecked();
     out.preferGpu = gpuCheck_->isChecked();
+    out.useVulkan = vulkanCheck_->isChecked();
     return out;
 }
 

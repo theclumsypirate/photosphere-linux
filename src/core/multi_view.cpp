@@ -20,21 +20,32 @@ cv::Mat renderVirtualView(const cv::Mat& equirect, const VirtualCamera& camera,
                    rotation::identity(), false});
     const double tanX = std::tan(camera.fovDegrees * kPi / 360.0);
     const double tanY = tanX * height / width;
+    const double rx = basis.right[0], ry = basis.right[1], rz = basis.right[2];
+    const double ux = basis.up[0], uy = basis.up[1], uz = basis.up[2];
+    const double fx = basis.forward[0], fy = basis.forward[1], fz = basis.forward[2];
+    const double xStep = 2.0 * tanX / width;
+    const double xStart = -tanX + xStep * 0.5;
+    const double yStep = 2.0 * tanY / height;
+    const double yStart = tanY - yStep * 0.5;
+    const double lonScale = equirect.cols / 360.0;
+    const double latScale = equirect.rows / 180.0;
+    const float xOffset = static_cast<float>(equirect.cols * 0.5 - 0.5);
+    const float yOffset = static_cast<float>(equirect.rows * 0.5 - 0.5);
     cv::Mat mapX(height, width, CV_32FC1);
     cv::Mat mapY(height, width, CV_32FC1);
     for (int row = 0; row < height; ++row) {
-        const double cy = -(static_cast<double>(row) / height - 0.5) * 2.0 * tanY;
+        const double cy = yStart - yStep * row;
         auto* mx = mapX.ptr<float>(row);
         auto* my = mapY.ptr<float>(row);
         for (int col = 0; col < width; ++col) {
-            const double cx = (static_cast<double>(col) / width - 0.5) * 2.0 * tanX;
-            const Vec3 d = basis.toWorld(cx, cy, 1.0);
-            const double lon = std::atan2(d[0], d[1]);
-            const double lat = std::asin(std::clamp(d[2], -1.0, 1.0));
-            mx[col] = static_cast<float>(equirect::columnFor(
-                lon * 180.0 / kPi, equirect.cols));
-            my[col] = static_cast<float>(equirect::rowFor(
-                lat * 180.0 / kPi, equirect.rows));
+            const double cx = xStart + xStep * col;
+            const double dx = cx * rx + cy * ux + fx;
+            const double dy = cx * ry + cy * uy + fy;
+            const double dz = cx * rz + cy * uz + fz;
+            const double lon = std::atan2(dx, dy) * 180.0 / kPi;
+            const double lat = std::asin(std::clamp(dz, -1.0, 1.0)) * 180.0 / kPi;
+            mx[col] = static_cast<float>(lon * lonScale) + xOffset;
+            my[col] = yOffset - static_cast<float>(lat * latScale);
         }
     }
     cv::Mat out;

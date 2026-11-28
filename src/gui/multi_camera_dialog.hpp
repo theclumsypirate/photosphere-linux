@@ -41,6 +41,7 @@ protected:
 
 private:
     void build();
+    void schedulePreview();
     cv::Mat currentPanorama() const;
     struct Camera {
         double yaw = 0.0;

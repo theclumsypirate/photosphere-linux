@@ -56,6 +56,16 @@ MultiCameraDialog::MultiCameraDialog(const QString& videoPath, QWidget* parent)
     }
 }
 
+void MultiCameraDialog::schedulePreview() {
+    if (!previewTimer_) {
+        previewTimer_ = new QTimer(this);
+        previewTimer_->setSingleShot(true);
+        connect(previewTimer_, &QTimer::timeout, this,
+                &MultiCameraDialog::preview);
+    }
+    previewTimer_->start(60);
+}
+
 void MultiCameraDialog::build() {
     setWindowTitle("Multi-camera view");
     resize(1100, 720);
@@ -81,13 +91,7 @@ void MultiCameraDialog::build() {
     fov_->setValue(static_cast<int>(camera_[0].fov));
     connect(fov_, &QSlider::valueChanged, this, [this](int value) {
         camera_[selected_].fov = value;
-        if (!previewTimer_) {
-            previewTimer_ = new QTimer(this);
-            previewTimer_->setSingleShot(true);
-            connect(previewTimer_, &QTimer::timeout, this,
-                    &MultiCameraDialog::preview);
-        }
-        previewTimer_->start(80);
+        schedulePreview();
     });
 
     pip_ = new QCheckBox("Picture in picture", this);
@@ -147,7 +151,7 @@ void MultiCameraDialog::preview() {
                               ? renderPipView(main, camera_[0], secondary,
                                               camera_[1], 1024, 512)
                               : renderSplitView(main, camera_[0], secondary,
-                                                camera_[1], 1024, 512);
+                                                camera_[1], 800, 400);
     if (image.empty()) return;
     previewImage_ = QImage(image.data, image.cols, image.rows,
                            static_cast<qsizetype>(image.step),
@@ -220,7 +224,7 @@ void MultiCameraDialog::mouseMoveEvent(QMouseEvent* event) {
         camera_[selected_].pitch = std::clamp(camera_[selected_].pitch +
                                               delta.y() * 0.35, -89.0, 89.0);
         lastPos_ = event->pos();
-        preview();
+        schedulePreview();
     }
     QDialog::mouseMoveEvent(event);
 }

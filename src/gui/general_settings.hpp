@@ -19,6 +19,7 @@ struct AppSettings {
     bool forceX11 = false;
     bool softwareRendering = false;
     bool preferGpu = true;
+    bool useVulkan = false;
 };
 
 AppSettings loadAppSettings();
@@ -44,6 +45,7 @@ private:
     QCheckBox* forceX11Check_ = nullptr;
     QCheckBox* softwareCheck_ = nullptr;
     QCheckBox* gpuCheck_ = nullptr;
+    QCheckBox* vulkanCheck_ = nullptr;
     QLabel* updateLabel_ = nullptr;
     QString latestReleaseUrl_;
     QString currentVersion_ = "1.0.1";
