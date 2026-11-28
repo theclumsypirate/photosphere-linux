@@ -5,6 +5,7 @@
 
 #include <opencv2/core.hpp>
 
+class QComboBox;
 class QLabel;
 class QPushButton;
 class QSlider;
@@ -34,6 +35,7 @@ private:
     ShaderViewer* viewer_ = nullptr;
     ShaderPlayback* playback_ = nullptr;
     QPushButton* playButton_ = nullptr;
+    QComboBox* speedCombo_ = nullptr;
     QSlider* slider_ = nullptr;
     QLabel* timeLabel_ = nullptr;
     QLabel* statusLabel_ = nullptr;

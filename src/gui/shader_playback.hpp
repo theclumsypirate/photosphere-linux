@@ -5,6 +5,7 @@
 
 #include <opencv2/core.hpp>
 
+#include <algorithm>
 #include <condition_variable>
 #include <deque>
 #include <memory>
@@ -32,8 +33,10 @@ public:
     void pause();
     void seek(double seconds);
     void close();
+    void setSpeed(double speed) { speed_ = std::max(0.25, std::min(16.0, speed)); }
 
     bool playing() const { return playing_; }
+    double speed() const { return speed_; }
     double position() const { return position_; }
     double duration() const { return duration_; }
 
@@ -67,6 +70,7 @@ private:
     double fps_ = 25.0;
     double duration_ = 0.0;
     double position_ = 0.0;
+    double speed_ = 1.0;
     bool playing_ = false;
     int frameCount_ = 0;
     double lastDisplayedTime_ = -1.0;

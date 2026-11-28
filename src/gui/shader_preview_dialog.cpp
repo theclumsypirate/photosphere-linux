@@ -3,6 +3,7 @@
 #include "gui/shader_playback.hpp"
 #include "gui/shader_viewer.hpp"
 
+#include <QComboBox>
 #include <QHBoxLayout>
 #include <QLabel>
 #include <QPushButton>
@@ -22,6 +23,10 @@ ShaderPreviewDialog::ShaderPreviewDialog(const QString& videoPath, double lensFo
     playback_ = new ShaderPlayback(this);
 
     playButton_ = new QPushButton("Pause", this);
+    speedCombo_ = new QComboBox(this);
+    for (const QString& label : {"0.5x", "1x", "2x", "4x", "8x", "16x"})
+        speedCombo_->addItem(label);
+    speedCombo_->setCurrentText("1x");
     slider_ = new QSlider(Qt::Horizontal, this);
     slider_->setRange(0, 1000);
     timeLabel_ = new QLabel("0.0 s", this);
@@ -29,6 +34,7 @@ ShaderPreviewDialog::ShaderPreviewDialog(const QString& videoPath, double lensFo
 
     auto* controls = new QHBoxLayout();
     controls->addWidget(playButton_);
+    controls->addWidget(speedCombo_);
     controls->addWidget(slider_, 1);
     controls->addWidget(timeLabel_);
 
@@ -39,6 +45,10 @@ ShaderPreviewDialog::ShaderPreviewDialog(const QString& videoPath, double lensFo
 
     connect(playButton_, &QPushButton::clicked, this,
             &ShaderPreviewDialog::togglePlay);
+    connect(speedCombo_, &QComboBox::currentTextChanged, this,
+            [this](const QString& text) {
+                playback_->setSpeed(text.chopped(1).toDouble());
+            });
     connect(slider_, &QSlider::sliderPressed, this,
             [this]() { scrubbing_ = true; });
     connect(slider_, &QSlider::sliderReleased, this, [this]() {

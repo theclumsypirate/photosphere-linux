@@ -151,7 +151,7 @@ void ShaderPlayback::seek(double seconds) {
 }
 
 void ShaderPlayback::tick() {
-    if (playing_) position_ = std::min(duration_, position_ + 1.0 / 60.0);
+    if (playing_) position_ = std::min(duration_, position_ + speed_ / 60.0);
     if (!queue_) return;
     cv::Mat frame;
     double frameTime = lastDisplayedTime_;

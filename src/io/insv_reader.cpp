@@ -7,6 +7,7 @@
 
 #include <algorithm>
 #include <atomic>
+#include <filesystem>
 #include <fstream>
 #include <vector>
 
@@ -20,6 +21,8 @@ extern "C" {
 #endif
 
 namespace ps::io {
+
+namespace fs = std::filesystem;
 
 #ifdef PS_HAVE_FFMPEG
 namespace {
@@ -90,8 +93,21 @@ bool openHardwareDecoder(DecoderState& state, const AVCodec* codec,
 bool openSoftwareDecoder(DecoderState& state, const AVCodec* codec,
                          AVCodecParameters* parameters) {
     state.codec = avcodec_alloc_context3(codec);
-    if (!state.codec || avcodec_parameters_to_context(state.codec, parameters) < 0 ||
-        avcodec_open2(state.codec, codec, nullptr) < 0) {
+    if (!state.codec || avcodec_parameters_to_context(state.codec, parameters) < 0) {
+        avcodec_free_context(&state.codec);
+        return false;
+    }
+    // Software HEVC is the bottleneck here. Frame and slice threading lets
+    // the decoder use all cores instead of one.
+    state.codec->thread_count = 0;
+    state.codec->thread_type = FF_THREAD_FRAME | FF_THREAD_SLICE;
+    if (codec->max_lowres > 0)
+        state.codec->lowres = std::min<int>(2, codec->max_lowres);
+    // The preview downscales by 8x, so the HEVC deblocking and SAO passes are
+    // invisible here. Skipping them saves a significant part of the CPU time.
+    state.codec->skip_loop_filter = AVDISCARD_ALL;
+    state.codec->flags2 |= AV_CODEC_FLAG2_FAST;
+    if (avcodec_open2(state.codec, codec, nullptr) < 0) {
         avcodec_free_context(&state.codec);
         return false;
     }
@@ -380,7 +396,7 @@ bool decodeAtTimes(const std::string& path, const std::vector<double>& times,
                         const auto source = static_cast<AVPixelFormat>(ready->format);
                         decoders[decoderIndex].sws = sws_getContext(
                             w, h, softwarePixelFormat(source),
-                            w, h, AV_PIX_FMT_BGR24, SWS_BILINEAR,
+                            w, h, AV_PIX_FMT_BGR24, SWS_FAST_BILINEAR,
                             nullptr, nullptr, nullptr);
                         applyFullRange(decoders[decoderIndex].sws, isFullRange(source));
                     }
@@ -544,7 +560,7 @@ bool readInsv(const std::string& path, std::vector<LensFrame>& out,
                 if (!decoder.sws) {
                     const auto source = static_cast<AVPixelFormat>(ready->format);
                     decoder.sws = sws_getContext(w, h, softwarePixelFormat(source),
-                                                 w, h, AV_PIX_FMT_BGR24, SWS_BILINEAR,
+                                                 w, h, AV_PIX_FMT_BGR24, SWS_FAST_BILINEAR,
                                                  nullptr, nullptr, nullptr);
                     applyFullRange(decoder.sws, isFullRange(source));
                 }
@@ -621,6 +637,46 @@ bool readInsv(const std::string& path, std::vector<LensFrame>& out,
 #endif
 }
 
+// Insta360 writes a low-resolution .lrv next to each 4K .insv. At preview
+// sizes it is visually identical and much cheaper to decode.
+std::string lowResSidecar(const std::string& path) {
+    std::error_code ec;
+    const fs::path input(path);
+    const std::string stem = input.stem().string();
+    const fs::path dir = input.parent_path();
+    std::vector<std::string> names{stem};
+    auto add = [&](const std::string& name) {
+        if (std::find(names.begin(), names.end(), name) == names.end())
+            names.push_back(name);
+    };
+    const size_t marker = stem.find("_00_");
+    if (marker != std::string::npos) {
+        std::string alt = stem;
+        alt.replace(marker, 4, "_11_");
+        add(alt);
+    }
+    for (const std::string& word : {"vid", "VID", "Vid"}) {
+        const size_t pos = stem.find(word);
+        if (pos == std::string::npos) continue;
+        std::string alt = stem;
+        alt.replace(pos, word.size(), word == "VID" ? "LRV" : "lrv");
+        add(alt);
+        const size_t second = alt.find("_00_");
+        if (second != std::string::npos) {
+            std::string other = alt;
+            other.replace(second, 4, "_11_");
+            add(other);
+        }
+    }
+    for (const std::string& name : names) {
+        for (const char* extension : {".lrv", ".LRV"}) {
+            const fs::path candidate = dir / (name + extension);
+            if (fs::exists(candidate, ec) && !ec) return candidate.string();
+        }
+    }
+    return {};
+}
+
 bool streamInsvSequential(const std::string& path, double fromSeconds,
                           const InsvFrameCallback& callback,
                           std::string& error, int scaleWidth,
@@ -630,8 +686,13 @@ bool streamInsvSequential(const std::string& path, double fromSeconds,
     error = "built without libav: INSV input is disabled";
     return false;
 #else
+    std::string decodePath = path;
+    if (scaleWidth > 0 && scaleWidth <= 1024) {
+        const std::string sidecar = lowResSidecar(path);
+        if (!sidecar.empty()) decodePath = sidecar;
+    }
     AVFormatContext* ctx = nullptr;
-    if (avformat_open_input(&ctx, path.c_str(), nullptr, nullptr) < 0) {
+    if (avformat_open_input(&ctx, decodePath.c_str(), nullptr, nullptr) < 0) {
         error = "cannot open video container";
         return false;
     }
@@ -717,7 +778,7 @@ bool streamInsvSequential(const std::string& path, double fromSeconds,
                 const auto source = static_cast<AVPixelFormat>(cpu->format);
                 decoder.sws = sws_getContext(sourceWidth, sourceHeight,
                                              softwarePixelFormat(source),
-                                             w, h, AV_PIX_FMT_BGR24, SWS_BILINEAR,
+                                             w, h, AV_PIX_FMT_BGR24, SWS_FAST_BILINEAR,
                                              nullptr, nullptr, nullptr);
                 applyFullRange(decoder.sws, isFullRange(source));
             }
