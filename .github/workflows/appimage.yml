@@ -20,7 +20,7 @@ jobs:
             libswscale-dev libswresample-dev libraw-dev \
             libgl1-mesa-dev libegl1-mesa-dev libxkbcommon-x11-0
 
-      - name: Build CLI and GUI
+      - name: Build GUI
         run: |
           cmake -S . -B build-gui -G Ninja \
             -DCMAKE_BUILD_TYPE=Release \
@@ -48,6 +48,8 @@ jobs:
           cp build-gui/photosphere-gui AppDir/usr/bin/
           cp assets/photosphere-linux.desktop AppDir/usr/share/applications/
           cp assets/icon.png AppDir/usr/share/icons/hicolor/512x512/apps/photosphere-linux.png
+          mkdir -p AppDir/usr/share/pixmaps
+          cp assets/icon.png AppDir/usr/share/pixmaps/photosphere-linux.png
           cp assets/icon.png AppDir/photosphere-linux.png
 
       - name: Deploy Qt and libraries
@@ -66,6 +68,12 @@ jobs:
             -name 'libcuda*' -o -name 'libnvidia*' -o -name 'libvulkan*' -o \
             -name 'libasound*' -o -name 'libpipewire*' \
             \) -delete
+
+      - name: Set AppImage icon
+        run: |
+          find AppDir -maxdepth 1 -type f -name '*.png' \
+            ! -name 'photosphere-linux.png' -delete
+          ln -sf photosphere-linux.png AppDir/.DirIcon
 
       - name: Pack AppImage
         env:
