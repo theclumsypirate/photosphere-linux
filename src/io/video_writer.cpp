@@ -7,8 +7,11 @@
 extern "C" {
 #include <libavcodec/avcodec.h>
 #include <libavformat/avformat.h>
+#include <libavutil/channel_layout.h>
 #include <libavutil/imgutils.h>
 #include <libavutil/spherical.h>
+#include <libavutil/version.h>
+#include <libavformat/version.h>
 #include <libswresample/swresample.h>
 #include <libswscale/swscale.h>
 }
@@ -91,7 +94,12 @@ bool Mp4Writer::Impl::encodeRotatedAudio(std::string& error) {
     enc->sample_rate = dec->sample_rate;
     // AAC does not accept the ambisonic channel order. Encode the four ACN
     // channels with a plain layout and tag the output stream as ambisonics.
+#if LIBAVUTIL_VERSION_MAJOR >= 57
     enc->ch_layout = AV_CHANNEL_LAYOUT_QUAD;
+#else
+    enc->channels = 4;
+    enc->channel_layout = AV_CH_LAYOUT_QUAD;
+#endif
     enc->bit_rate = 256000;
     enc->time_base = {1, std::max(1, dec->sample_rate)};
     if (avcodec_open2(enc, encoderCodec, nullptr) < 0) {
@@ -103,7 +111,12 @@ bool Mp4Writer::Impl::encodeRotatedAudio(std::string& error) {
         error = "cannot create rotated audio stream";
         return false;
     }
+#if LIBAVUTIL_VERSION_MAJOR >= 57
     output->codecpar->ch_layout = AV_CHANNEL_LAYOUT_AMBISONIC_FIRST_ORDER;
+#else
+    output->codecpar->channels = 4;
+    output->codecpar->channel_layout = AV_CH_LAYOUT_QUAD;
+#endif
     output->codecpar->codec_tag = 0;
     output->time_base = enc->time_base;
     audioOutputStream = output;
@@ -116,17 +129,30 @@ bool Mp4Writer::Impl::encodeRotatedAudio(std::string& error) {
         AVFrame* source = audioFrame;
         float* planes[4] = {nullptr, nullptr, nullptr, nullptr};
         uint8_t** converted = nullptr;
-        if (source->format != AV_SAMPLE_FMT_FLTP || source->ch_layout.nb_channels != 4) {
+        const bool needsConvert = source->format != AV_SAMPLE_FMT_FLTP
+#if LIBAVUTIL_VERSION_MAJOR >= 57
+            || source->ch_layout.nb_channels != 4
+#else
+            || source->channels != 4
+#endif
+            ;
+        if (needsConvert) {
             if (!swr) {
+#if LIBAVUTIL_VERSION_MAJOR >= 57
                 AVChannelLayout outLayout{AV_CHANNEL_ORDER_UNSPEC, 4, 0, nullptr};
                 AVChannelLayout inLayout{AV_CHANNEL_ORDER_UNSPEC, 4, 0, nullptr};
-                if (swr_alloc_set_opts2(&swr, &outLayout, AV_SAMPLE_FMT_FLTP,
-                                        enc->sample_rate, &inLayout,
-                                        static_cast<AVSampleFormat>(source->format),
-                                        source->sample_rate, 0, nullptr) < 0 ||
-                    swr_init(swr) < 0) {
-                    return;
-                }
+                const int setup = swr_alloc_set_opts2(
+                    &swr, &outLayout, AV_SAMPLE_FMT_FLTP, enc->sample_rate,
+                    &inLayout, static_cast<AVSampleFormat>(source->format),
+                    source->sample_rate, 0, nullptr);
+#else
+                const int setup = swr_alloc_set_opts(
+                    swr, AV_CH_LAYOUT_QUAD, AV_SAMPLE_FMT_FLTP, enc->sample_rate,
+                    av_get_default_channel_layout(4),
+                    static_cast<AVSampleFormat>(source->format),
+                    source->sample_rate, 0, nullptr);
+#endif
+                if (setup < 0 || swr_init(swr) < 0) return;
             }
             if (av_samples_alloc_array_and_samples(&converted, nullptr, 4,
                                                    source->nb_samples,
@@ -154,7 +180,12 @@ bool Mp4Writer::Impl::encodeRotatedAudio(std::string& error) {
         av_frame_unref(encFrame);
         encFrame->format = AV_SAMPLE_FMT_FLTP;
         encFrame->sample_rate = enc->sample_rate;
+#if LIBAVUTIL_VERSION_MAJOR >= 57
         encFrame->ch_layout = enc->ch_layout;
+#else
+        encFrame->channels = enc->channels;
+        encFrame->channel_layout = enc->channel_layout;
+#endif
         encFrame->nb_samples = source->nb_samples;
         encFrame->pts = static_cast<int64_t>(seconds * enc->sample_rate) - startSamples;
         if (av_frame_get_buffer(encFrame, 0) >= 0) {
@@ -339,11 +370,17 @@ bool Mp4Writer::open(std::string& error) {
             av_mallocz(sizeof(AVSphericalMapping)));
         if (mapping) {
             mapping->projection = AV_SPHERICAL_EQUIRECTANGULAR;
+#if LIBAVFORMAT_VERSION_MAJOR >= 59
             av_packet_side_data_add(&impl_->stream->codecpar->coded_side_data,
                                     &impl_->stream->codecpar->nb_coded_side_data,
                                     AV_PKT_DATA_SPHERICAL,
                                     reinterpret_cast<uint8_t*>(mapping),
                                     sizeof(AVSphericalMapping), 0);
+#else
+            av_stream_add_side_data(impl_->stream, AV_PKT_DATA_SPHERICAL,
+                                    reinterpret_cast<uint8_t*>(mapping),
+                                    sizeof(AVSphericalMapping));
+#endif
         }
     }
     // Copy the source audio track. Packets are buffered so we can trim the
@@ -356,6 +393,7 @@ bool Mp4Writer::open(std::string& error) {
             AVStream* input = impl_->audioFormat->streams[i];
             if (input->codecpar->codec_type != AVMEDIA_TYPE_AUDIO) continue;
             impl_->audioStreamIndex = static_cast<int>(i);
+#if LIBAVUTIL_VERSION_MAJOR >= 57
             bool ambisonicLayout = input->codecpar->ch_layout.order ==
                                    AV_CHANNEL_ORDER_AMBISONIC;
             if (!ambisonicLayout && input->codecpar->ch_layout.order ==
@@ -368,6 +406,17 @@ bool Mp4Writer::open(std::string& error) {
             }
             const bool firstOrder = input->codecpar->ch_layout.nb_channels == 4 &&
                                     (ambisonicLayout || impl_->forceAmbisonic);
+#else
+#ifdef AV_CH_LAYOUT_AMBISONIC_FIRST_ORDER
+            const bool ambisonicLayout =
+                input->codecpar->channel_layout ==
+                AV_CH_LAYOUT_AMBISONIC_FIRST_ORDER;
+#else
+            const bool ambisonicLayout = false;
+#endif
+            const bool firstOrder = input->codecpar->channels == 4 &&
+                                    (ambisonicLayout || impl_->forceAmbisonic);
+#endif
             if (firstOrder && impl_->audioRotation &&
                 impl_->encodeRotatedAudio(error)) {
                 break;
