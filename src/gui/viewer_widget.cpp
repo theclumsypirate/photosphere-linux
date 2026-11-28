@@ -61,8 +61,6 @@ ViewerWidget::ViewerWidget(QWidget* parent) : QOpenGLWidget(parent) {
             this, &ViewerWidget::snapshotRequested);
 
     savePanoButton_ = new QPushButton("Save panorama", this);
-    savePanoButton_->setIcon(QIcon(":/icons/icon.png"));
-    savePanoButton_->setIconSize(QSize(20, 20));
     savePanoButton_->setToolTip("Save the full equirectangular panorama");
     savePanoButton_->setFixedSize(150, 40);
     savePanoButton_->setStyleSheet(
@@ -92,8 +90,6 @@ ViewerWidget::ViewerWidget(QWidget* parent) : QOpenGLWidget(parent) {
     });
 
     stabilizeButton_ = new QPushButton("Stabilize", this);
-    stabilizeButton_->setIcon(QIcon(":/icons/icon.png"));
-    stabilizeButton_->setIconSize(QSize(20, 20));
     stabilizeButton_->setToolTip("Level the panorama using IMU telemetry");
     stabilizeButton_->setFixedSize(110, 40);
     stabilizeButton_->setStyleSheet(

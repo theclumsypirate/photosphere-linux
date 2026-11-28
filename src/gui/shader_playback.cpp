@@ -152,9 +152,12 @@ void ShaderPlayback::stopAudio() {
     if (!audio_) return;
     if (audio_->state() != QProcess::NotRunning) {
         audio_->terminate();
-        if (!audio_->waitForFinished(500)) audio_->kill();
+        if (!audio_->waitForFinished(1000)) {
+            audio_->kill();
+            audio_->waitForFinished(1000);
+        }
     }
-    delete audio_;
+    audio_->deleteLater();
     audio_ = nullptr;
 }
 

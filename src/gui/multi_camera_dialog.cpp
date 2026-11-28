@@ -140,13 +140,12 @@ void MultiCameraDialog::build() {
     side->addWidget(saveButton);
     side->addStretch(1);
 
-    auto* layout = new QHBoxLayout(this);
+    auto* layout = new QHBoxLayout();
     layout->addWidget(previewLabel_, 1);
     layout->addLayout(side);
-    auto* bottom = new QVBoxLayout();
+    auto* bottom = new QVBoxLayout(this);
     bottom->addLayout(layout);
     bottom->addWidget(statusLabel_);
-    setLayout(bottom);
 
     preview();
 }
