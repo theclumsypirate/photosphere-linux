@@ -37,7 +37,8 @@ struct WarpMaps {
 
 // Dewarp coordinates depend only on geometry, not on image content. Cache them
 // so an export that stitches thousands of frames computes them once.
-thread_local std::map<std::tuple<int, int, int, int, bool, int>, WarpMaps> warpCache;
+thread_local std::map<std::tuple<int, int, int, int, bool, int, int, int>, WarpMaps>
+    warpCache;
 
 // The two back-to-back fisheye lenses of an Insta360 style camera.
 LensBasis lensBasis(int lens) {
@@ -71,7 +72,7 @@ void accumulateFisheyeLevel(const cv::Mat& image, int lens, double fovDegrees,
 
     const auto key = std::make_tuple(image.cols, image.rows, lens,
                                      static_cast<int>(std::lround(fovDegrees * 100.0)),
-                                     flipLenses, divisor);
+                                     flipLenses, divisor, w, h);
     auto cached = warpCache.find(key);
     if (cached == warpCache.end()) {
         WarpMaps maps;

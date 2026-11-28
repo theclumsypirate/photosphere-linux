@@ -120,7 +120,6 @@ if(PS_BUILD_GUI)
     src/gui/shader_preview_dialog.cpp
     src/gui/shader_viewer.cpp
     src/gui/stitch_worker.cpp
-    src/gui/tourist_filter_dialog.cpp
     src/gui/video_export_worker.cpp
     src/gui/resources.qrc)
   target_link_libraries(photosphere-gui PRIVATE

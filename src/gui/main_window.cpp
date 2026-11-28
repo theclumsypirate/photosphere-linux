@@ -11,7 +11,6 @@
 #include "gui/save_format_dialog.hpp"
 #include "gui/shader_preview_dialog.hpp"
 #include "gui/stitch_worker.hpp"
-#include "gui/tourist_filter_dialog.hpp"
 #include "gui/video_export_worker.hpp"
 #include "core/little_planet.hpp"
 #include "core/stitcher.hpp"
@@ -40,6 +39,8 @@
 #include <QKeySequence>
 #include <QLabel>
 #include <QListWidgetItem>
+#include <QFile>
+#include <QMenu>
 #include <QMenuBar>
 #include <QMessageBox>
 #include <QMetaObject>
@@ -47,6 +48,7 @@
 #include <QPointer>
 #include <QProcess>
 #include <QProcessEnvironment>
+#include <QStandardPaths>
 #include <QPushButton>
 #include <QScrollArea>
 #include <QShortcut>
@@ -161,8 +163,12 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent) {
     io::setRawOptions({appSettings_.exposureEV, appSettings_.autoBright});
 
     auto* optionsMenu = menuBar()->addMenu("Options");
-    optionsMenu->addAction("Remove tourists from photos...", this,
-                           &MainWindow::openTouristFilter);
+    auto* removeMenu = optionsMenu->addMenu("Remove tourists");
+    for (const QString& method : {"CUT", "CUT_AND_MEDIAN", "MEDIAN",
+                                  "NOISE_AND_MEDIAN", "INPAINT_AND_MEDIAN"}) {
+        removeMenu->addAction(method, this,
+                              [this, method]() { removeTourists(method); });
+    }
 
     auto* central = new QWidget(this);
     auto* mainLayout = new QVBoxLayout(central);
@@ -900,9 +906,52 @@ void MainWindow::savePanorama() {
     hdrThread_->start();
 }
 
-void MainWindow::openTouristFilter() {
-    TouristFilterDialog dialog(this);
-    dialog.exec();
+void MainWindow::removeTourists(const QString& method) {
+    if (touristProcess_ && touristProcess_->state() != QProcess::NotRunning) {
+        logMessage("Tourist filter is already running.");
+        return;
+    }
+    const auto paths = inputPaths();
+    if (paths.empty()) {
+        QMessageBox::warning(this, "No input", "Add at least one photo first.");
+        return;
+    }
+    const QString folder = QFileInfo(QString::fromStdString(paths.front()))
+                               .absolutePath();
+    const QString tool =
+        QDir::homePath() + "/.local/share/photosphere/tourist-filter";
+    if (!QFile::exists(tool + "/filter-all-tourists.py")) {
+        logMessage("Tourist filter not found in " + tool);
+        return;
+    }
+    const QString python = QStandardPaths::findExecutable("python3");
+    if (python.isEmpty()) {
+        logMessage("python3 was not found in PATH.");
+        return;
+    }
+
+    touristProcess_ = new QProcess(this);
+    touristProcess_->setWorkingDirectory(tool);
+    connect(touristProcess_, &QProcess::readyReadStandardOutput, this, [this]() {
+        logMessage(QString::fromUtf8(touristProcess_->readAllStandardOutput())
+                       .trimmed());
+    });
+    connect(touristProcess_, &QProcess::readyReadStandardError, this, [this]() {
+        logMessage(QString::fromUtf8(touristProcess_->readAllStandardError())
+                       .trimmed());
+    });
+    connect(touristProcess_,
+            QOverload<int, QProcess::ExitStatus>::of(&QProcess::finished), this,
+            [this](int code) {
+                logMessage("Tourist filter finished with code " +
+                           QString::number(code));
+                touristProcess_->deleteLater();
+                touristProcess_ = nullptr;
+            });
+    touristProcess_->start(python,
+                           {"-u", tool + "/filter-all-tourists.py", "-i",
+                            folder, "-m", method, "-n"});
+    logMessage("Removing tourists from " + folder + " using " + method + "...");
 }
 
 void MainWindow::openShaderPreview() {

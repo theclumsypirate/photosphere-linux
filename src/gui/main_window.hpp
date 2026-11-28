@@ -8,6 +8,7 @@
 #include <QMainWindow>
 #include <QPlainTextEdit>
 #include <QProgressDialog>
+#include <QProcess>
 #include <QThread>
 #include <QPushButton>
 #include <QSpinBox>
@@ -51,7 +52,7 @@ private slots:
     void saveTagged();
     void openFullscreen();
     void toggleFullscreen();
-    void openTouristFilter();
+    void removeTourists(const QString& method);
 
 protected:
     void dragEnterEvent(QDragEnterEvent* event) override;
@@ -77,6 +78,7 @@ private:
     QLabel* statusLabel_ = nullptr;
     QPlainTextEdit* logEdit_ = nullptr;
     QPushButton* exportButton_ = nullptr;
+    QProcess* touristProcess_ = nullptr;
     ViewerWidget* viewer_ = nullptr;
     cv::Mat panorama_;
     QThread* stitchThread_ = nullptr;
