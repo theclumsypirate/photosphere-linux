@@ -1,0 +1,81 @@
+name: AppImage
+
+on:
+  workflow_dispatch:
+
+jobs:
+  appimage:
+    runs-on: ubuntu-22.04
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            build-essential cmake ninja-build pkg-config patchelf \
+            qt6-base-dev qt6-base-dev-tools \
+            libopencv-dev libavformat-dev libavcodec-dev libavutil-dev \
+            libswscale-dev libswresample-dev libraw-dev \
+            libgl1-mesa-dev libegl1-mesa-dev libxkbcommon-x11-0
+
+      - name: Build CLI and GUI
+        run: |
+          cmake -S . -B build-gui -G Ninja \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DPS_BUILD_GUI=ON \
+            -DPS_WITH_FFMPEG=ON \
+            -DPS_WITH_LIBRAW=ON
+          cmake --build build-gui -j2
+
+      - name: Run unit tests
+        run: ./build-gui/ps_tests
+
+      - name: Download AppImage tools
+        run: |
+          wget -q -O linuxdeploy.AppImage \
+            https://github.com/linuxdeploy/linuxdeploy/releases/download/continuous/linuxdeploy-x86_64.AppImage
+          wget -q -O linuxdeploy-plugin-qt-x86_64.AppImage \
+            https://github.com/linuxdeploy/linuxdeploy-plugin-qt/releases/download/continuous/linuxdeploy-plugin-qt-x86_64.AppImage
+          chmod +x linuxdeploy.AppImage linuxdeploy-plugin-qt-x86_64.AppImage
+
+      - name: Prepare AppDir
+        run: |
+          mkdir -p AppDir/usr/bin
+          mkdir -p AppDir/usr/share/applications
+          mkdir -p AppDir/usr/share/icons/hicolor/512x512/apps
+          cp build-gui/photosphere-gui AppDir/usr/bin/
+          cp assets/photosphere-linux.desktop AppDir/usr/share/applications/
+          cp assets/icon.png AppDir/usr/share/icons/hicolor/512x512/apps/photosphere-linux.png
+          cp assets/icon.png AppDir/photosphere-linux.png
+
+      - name: Deploy Qt and libraries
+        env:
+          APPIMAGE_EXTRACT_AND_RUN: 1
+        run: |
+          QMAKE_BIN="$(command -v qmake6 || command -v qmake)"
+          export QMAKE="$QMAKE_BIN"
+          ./linuxdeploy.AppImage --appdir AppDir --plugin qt
+
+      - name: Remove host GPU and audio libraries
+        run: |
+          find AppDir -type f \( \
+            -name 'libGL*' -o -name 'libEGL*' -o -name 'libGLX*' -o \
+            -name 'libgbm*' -o -name 'libdrm*' -o -name 'libva*' -o \
+            -name 'libcuda*' -o -name 'libnvidia*' -o -name 'libvulkan*' -o \
+            -name 'libasound*' -o -name 'libpipewire*' \
+            \) -delete
+
+      - name: Pack AppImage
+        env:
+          APPIMAGE_EXTRACT_AND_RUN: 1
+          OUTPUT: Photosphere-Linux-x86_64.AppImage
+        run: ./linuxdeploy.AppImage --appdir AppDir --output appimage
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: photosphere-linux-appimage
+          path: Photosphere-Linux-x86_64.AppImage
+          if-no-files-found: error

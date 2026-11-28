@@ -1,6 +1,6 @@
 [Desktop Entry]
 Type=Application
-Name=PhotoSphere Linux
+Name=Photosphere Linux
 Comment=Stitch 360 panoramas from photos and videos
 Exec=photosphere-gui
 Icon=photosphere-linux
