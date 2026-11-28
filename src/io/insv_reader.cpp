@@ -127,6 +127,7 @@ bool fallbackToSoftware(DecoderState& state, const AVCodec* codec,
                         AVCodecParameters* parameters) {
     if (!state.hardware) return false;
     hardwareDecodeUnavailable = true;
+    markHardwareDecodeFailed();
     releaseDecoder(state);
     return openSoftwareDecoder(state, codec, parameters);
 }
@@ -134,7 +135,7 @@ bool fallbackToSoftware(DecoderState& state, const AVCodec* codec,
 // Tries the preferred backend, then the other hardware paths, then software.
 bool openBestDecoder(DecoderState& state, const AVCodec* codec,
                      AVCodecParameters* parameters, DecodeBackend preferred) {
-    if (hardwareDecodeUnavailable)
+    if (hardwareDecodeUnavailable || hardwareDecodeFailed())
         return openSoftwareDecoder(state, codec, parameters);
     const DecodeBackend candidates[] = {preferred, DecodeBackend::Qsv,
                                         DecodeBackend::Vaapi, DecodeBackend::Cuda};

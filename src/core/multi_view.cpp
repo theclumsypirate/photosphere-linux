@@ -2,6 +2,7 @@
 
 #include "core/spherical.hpp"
 
+#include <opencv2/core/utility.hpp>
 #include <opencv2/imgproc.hpp>
 
 #include <algorithm>
@@ -34,25 +35,28 @@ cv::Mat renderVirtualView(const cv::Mat& equirect, const VirtualCamera& camera,
     const float yOffset = static_cast<float>(equirect.rows * 0.5 - 0.5);
     cv::Mat mapX(height, width, CV_32FC1);
     cv::Mat mapY(height, width, CV_32FC1);
-    for (int row = 0; row < height; ++row) {
-        const double cy = yStart - yStep * row;
-        auto* mx = mapX.ptr<float>(row);
-        auto* my = mapY.ptr<float>(row);
-        for (int col = 0; col < width; ++col) {
-            const double cx = xStart + xStep * col;
-            double dx = cx * rx + cy * ux + fx;
-            double dy = cx * ry + cy * uy + fy;
-            double dz = cx * rz + cy * uz + fz;
-            const double length = std::sqrt(dx * dx + dy * dy + dz * dz);
-            dx /= length;
-            dy /= length;
-            dz /= length;
-            const double lon = std::atan2(dx, dy) * 180.0 / kPi;
-            const double lat = std::asin(std::clamp(dz, -1.0, 1.0)) * 180.0 / kPi;
-            mx[col] = static_cast<float>(lon * lonScale) + xOffset;
-            my[col] = yOffset - static_cast<float>(lat * latScale);
+    cv::parallel_for_(cv::Range(0, height), [&](const cv::Range& range) {
+        for (int row = range.start; row < range.end; ++row) {
+            const double cy = yStart - yStep * row;
+            auto* mx = mapX.ptr<float>(row);
+            auto* my = mapY.ptr<float>(row);
+            for (int col = 0; col < width; ++col) {
+                const double cx = xStart + xStep * col;
+                double dx = cx * rx + cy * ux + fx;
+                double dy = cx * ry + cy * uy + fy;
+                double dz = cx * rz + cy * uz + fz;
+                const double length = std::sqrt(dx * dx + dy * dy + dz * dz);
+                dx /= length;
+                dy /= length;
+                dz /= length;
+                const double lon = std::atan2(dx, dy) * 180.0 / kPi;
+                const double lat =
+                    std::asin(std::clamp(dz, -1.0, 1.0)) * 180.0 / kPi;
+                mx[col] = static_cast<float>(lon * lonScale) + xOffset;
+                my[col] = yOffset - static_cast<float>(lat * latScale);
+            }
         }
-    }
+    });
     cv::Mat out;
     cv::remap(equirect, out, mapX, mapY, cv::INTER_LINEAR, cv::BORDER_WRAP);
     return out;

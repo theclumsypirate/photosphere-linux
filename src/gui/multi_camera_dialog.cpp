@@ -115,7 +115,7 @@ void MultiCameraDialog::schedulePreview() {
         connect(previewTimer_, &QTimer::timeout, this,
                 &MultiCameraDialog::preview);
     }
-    previewTimer_->start(60);
+    previewTimer_->start(16);
 }
 
 void MultiCameraDialog::build() {

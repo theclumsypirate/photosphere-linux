@@ -76,7 +76,29 @@ GpuInfo detectGpu() {
     return info;
 }
 
+namespace {
+
+fs::path decodeFailureMarker() {
+    const char* home = std::getenv("HOME");
+    const fs::path base = home ? fs::path(home) : fs::temp_directory_path();
+    return base / ".cache" / "photosphere" / "hw_decode_failed";
+}
+
+} // namespace
+
+bool hardwareDecodeFailed() {
+    return pathExists(decodeFailureMarker());
+}
+
+void markHardwareDecodeFailed() {
+    const fs::path marker = decodeFailureMarker();
+    std::error_code ec;
+    fs::create_directories(marker.parent_path(), ec);
+    std::ofstream out(marker);
+}
+
 DecodeBackend GpuInfo::preferredDecodeBackend() const {
+    if (hardwareDecodeFailed()) return DecodeBackend::Cpu;
     if (hasNvidiaDevice || vendor == GpuVendor::Nvidia || opencvCudaDevices > 0)
         return DecodeBackend::Cuda;
     if (hasQsvLibrary && hasDrmRenderNode && vendor == GpuVendor::Intel)
