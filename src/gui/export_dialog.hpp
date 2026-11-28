@@ -5,10 +5,13 @@
 
 class QCheckBox;
 class QDoubleSpinBox;
+class QLabel;
 class QLineEdit;
 class QSpinBox;
 
 namespace ps::gui {
+
+class RangeSlider;
 
 struct ExportDialogOptions {
     int width = 2048;
@@ -41,8 +44,8 @@ private:
     QSpinBox* widthSpin_ = nullptr;
     QSpinBox* stepSpin_ = nullptr;
     QDoubleSpinBox* fpsSpin_ = nullptr;
-    QDoubleSpinBox* startSpin_ = nullptr;
-    QDoubleSpinBox* endSpin_ = nullptr;
+    RangeSlider* range_ = nullptr;
+    QLabel* rangeLabel_ = nullptr;
     QLineEdit* outputEdit_ = nullptr;
     QCheckBox* hevcCheck_ = nullptr;
     QCheckBox* sphericalCheck_ = nullptr;

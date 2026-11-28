@@ -1,5 +1,7 @@
 #include "gui/export_dialog.hpp"
 
+#include "gui/preview_range_dialog.hpp"
+
 #include <algorithm>
 
 #include <QCheckBox>
@@ -40,17 +42,23 @@ ExportDialog::ExportDialog(double durationSeconds, double sourceFps,
     fpsSpin_->setSuffix(" fps");
     fpsSpin_->setReadOnly(true);
 
-    startSpin_ = new QDoubleSpinBox(this);
-    startSpin_->setRange(0.0, std::max(0.0, durationSeconds));
-    startSpin_->setDecimals(2);
-    startSpin_->setSuffix(" s");
-    startSpin_->setValue(0.0);
-
-    endSpin_ = new QDoubleSpinBox(this);
-    endSpin_->setRange(0.0, std::max(0.0, durationSeconds));
-    endSpin_->setDecimals(2);
-    endSpin_->setSuffix(" s (0 = end of file)");
-    endSpin_->setValue(0.0);
+    range_ = new RangeSlider(this);
+    range_->setMaximumSeconds(std::max(0.1, durationSeconds));
+    range_->setValues(0.0, std::max(0.1, durationSeconds));
+    rangeLabel_ = new QLabel(this);
+    auto updateRangeLabel = [this]() {
+        auto format = [](double seconds) {
+            const int total = static_cast<int>(seconds + 0.5);
+            return QString("%1:%2").arg(total / 60, 2, 10, QChar('0'))
+                .arg(total % 60, 2, 10, QChar('0'));
+        };
+        rangeLabel_->setText(QString("From %1  to  %2")
+                                 .arg(format(range_->startSeconds()))
+                                 .arg(format(range_->endSeconds())));
+    };
+    updateRangeLabel();
+    connect(range_, &RangeSlider::valuesChanged, this,
+            [this, updateRangeLabel](double, double) { updateRangeLabel(); });
 
     hevcCheck_ = new QCheckBox("H.265 / HEVC", this);
     sphericalCheck_ = new QCheckBox("360 degree metadata", this);
@@ -94,8 +102,8 @@ ExportDialog::ExportDialog(double durationSeconds, double sourceFps,
     form->addRow(new QLabel("Panorama resolution"), widthSpin_);
     form->addRow(new QLabel("Source frame step"), stepSpin_);
     form->addRow(new QLabel("Export frame rate"), fpsSpin_);
-    form->addRow(new QLabel("Start at"), startSpin_);
-    form->addRow(new QLabel("End at"), endSpin_);
+    form->addRow(new QLabel("Time range"), range_);
+    form->addRow(rangeLabel_);
     form->addRow(hevcCheck_);
     form->addRow(sphericalCheck_);
     form->addRow(horizonCheck_);
@@ -119,8 +127,8 @@ ExportDialogOptions ExportDialog::options() const {
     ExportDialogOptions out;
     out.width = widthSpin_->value();
     out.fps = fpsSpin_->value();
-    out.startTime = startSpin_->value();
-    out.endTime = endSpin_->value();
+    out.startTime = range_->startSeconds();
+    out.endTime = range_->endSeconds();
     out.output = outputEdit_->text();
     out.hevc = hevcCheck_->isChecked();
     out.spherical = sphericalCheck_->isChecked();
