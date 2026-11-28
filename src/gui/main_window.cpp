@@ -2,7 +2,6 @@
 
 #include "core/gpano.hpp"
 #include "core/gpu_info.hpp"
-#include "core/tourist_filter.hpp"
 #include "gui/export_dialog.hpp"
 #include "gui/general_settings.hpp"
 #include "gui/hdr_export_worker.hpp"
@@ -40,8 +39,6 @@
 #include <QKeySequence>
 #include <QLabel>
 #include <QListWidgetItem>
-#include <QMenu>
-#include <QMenuBar>
 #include <QMessageBox>
 #include <QMetaObject>
 #include <QPlainTextEdit>
@@ -54,7 +51,6 @@
 #include <QSplitter>
 #include <QStringList>
 #include <QTextCursor>
-#include <QTimer>
 #include <QVBoxLayout>
 #include <QWidget>
 
@@ -161,14 +157,6 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent) {
     setMinimumSize(1500, 900);
     appSettings_ = loadAppSettings();
     io::setRawOptions({appSettings_.exposureEV, appSettings_.autoBright});
-
-    auto* optionsMenu = menuBar()->addMenu("Options");
-    auto* removeMenu = optionsMenu->addMenu("Remove tourists");
-    for (const QString& method : {"CUT", "CUT_AND_MEDIAN", "MEDIAN",
-                                  "NOISE_AND_MEDIAN", "INPAINT_AND_MEDIAN"}) {
-        removeMenu->addAction(method, this,
-                              [this, method]() { removeTourists(method); });
-    }
 
     auto* central = new QWidget(this);
     auto* mainLayout = new QVBoxLayout(central);
@@ -904,74 +892,6 @@ void MainWindow::savePanorama() {
     });
     setStatus("Merging HDR bracket...");
     hdrThread_->start();
-}
-
-MainWindow::~MainWindow() {
-    if (touristThread_.joinable()) touristThread_.join();
-}
-
-void MainWindow::removeTourists(const QString& method) {
-    if (touristRunning_.load()) {
-        logMessage("Tourist filter is already running.");
-        return;
-    }
-    const auto paths = inputPaths();
-    if (paths.empty()) {
-        QMessageBox::warning(this, "No input", "Add at least one photo first.");
-        return;
-    }
-
-    core::TouristOptions options;
-    if (method == "CUT") options.method = core::TouristMethod::Cut;
-    else if (method == "CUT_AND_MEDIAN") options.method = core::TouristMethod::CutAndMedian;
-    else if (method == "NOISE_AND_MEDIAN") options.method = core::TouristMethod::NoiseAndMedian;
-    else if (method == "INPAINT_AND_MEDIAN") options.method = core::TouristMethod::InpaintAndMedian;
-    else options.method = core::TouristMethod::Median;
-
-    const std::string folder = QFileInfo(QString::fromStdString(paths.front()))
-                                   .absolutePath().toStdString();
-    touristError_.clear();
-    touristOutput_.clear();
-    touristDone_ = 0;
-    touristTotal_ = 1;
-    touristRunning_ = true;
-    if (touristThread_.joinable()) touristThread_.join();
-    touristThread_ = std::thread([folder, options, this]() {
-        std::string error, output;
-        const bool ok = core::removeTourists(
-            folder, options, output, error,
-            [this](int done, int total, const std::string&) {
-                touristDone_ = done;
-                touristTotal_ = std::max(1, total);
-            });
-        if (ok) touristOutput_ = output;
-        else touristError_ = error;
-        touristRunning_ = false;
-    });
-
-    if (!touristTimer_) {
-        touristTimer_ = new QTimer(this);
-        connect(touristTimer_, &QTimer::timeout, this, [this]() {
-            if (touristRunning_.load()) {
-                setStatus("Removing tourists " +
-                          QString::number(touristDone_.load()) + "/" +
-                          QString::number(touristTotal_.load()));
-                return;
-            }
-            touristTimer_->stop();
-            if (touristThread_.joinable()) touristThread_.join();
-            if (!touristError_.empty())
-                logMessage("Tourist filter failed: " +
-                           QString::fromStdString(touristError_));
-            else
-                logMessage("Tourist filter saved " +
-                           QString::fromStdString(touristOutput_));
-            setStatus("Tourist filter finished");
-        });
-    }
-    touristTimer_->start(200);
-    logMessage("Removing tourists from " + QString::fromStdString(folder) +
-               " using " + method + "...");
 }
 
 void MainWindow::openShaderPreview() {

@@ -15,7 +15,7 @@ option(PS_BUILD_GUI "Build the Qt 6 GUI (phase 2)" OFF)
 option(PS_BUILD_TESTS "Build unit tests" ON)
 
 find_package(OpenCV 4 REQUIRED COMPONENTS
-  core imgproc imgcodecs features2d flann photo stitching calib3d objdetect)
+  core imgproc imgcodecs features2d flann photo stitching calib3d)
 
 find_package(Threads REQUIRED)
 
@@ -37,7 +37,6 @@ add_library(ps_core
   src/core/pose_refiner.cpp
   src/core/stabilize.cpp
   src/core/stitcher.cpp
-  src/core/tourist_filter.cpp
   src/core/renderer.cpp
   src/core/gpano.cpp
   src/core/little_planet.cpp)

@@ -16,13 +16,10 @@
 
 #include <atomic>
 #include <string>
-#include <thread>
 #include <vector>
 
 #include "gui/general_settings.hpp"
 #include "gui/viewer_widget.hpp"
-
-class QTimer;
 
 namespace ps::gui {
 
@@ -31,7 +28,6 @@ class MainWindow : public QMainWindow {
 
 public:
     explicit MainWindow(QWidget* parent = nullptr);
-    ~MainWindow() override;
 
 public slots:
     void addPaths(const QStringList& paths);
@@ -55,7 +51,6 @@ private slots:
     void saveTagged();
     void openFullscreen();
     void toggleFullscreen();
-    void removeTourists(const QString& method);
 
 protected:
     void dragEnterEvent(QDragEnterEvent* event) override;
@@ -81,13 +76,6 @@ private:
     QLabel* statusLabel_ = nullptr;
     QPlainTextEdit* logEdit_ = nullptr;
     QPushButton* exportButton_ = nullptr;
-    QTimer* touristTimer_ = nullptr;
-    std::thread touristThread_;
-    std::atomic<bool> touristRunning_{false};
-    std::atomic<int> touristDone_{0};
-    std::atomic<int> touristTotal_{1};
-    std::string touristError_;
-    std::string touristOutput_;
     ViewerWidget* viewer_ = nullptr;
     cv::Mat panorama_;
     QThread* stitchThread_ = nullptr;
