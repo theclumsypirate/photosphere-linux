@@ -20,7 +20,8 @@
 namespace ps::gui {
 
 ExportDialog::ExportDialog(double durationSeconds, double sourceFps,
-                           const QString& defaultOutput, QWidget* parent)
+                           const QString& defaultOutput, bool needsStitch,
+                           QWidget* parent)
     : QDialog(parent), sourceFps_(sourceFps > 0 ? sourceFps : 25.0) {
     setWindowTitle("Export stitched video");
     setMinimumWidth(480);
@@ -119,6 +120,13 @@ ExportDialog::ExportDialog(double durationSeconds, double sourceFps,
     connect(buttons, &QDialogButtonBox::rejected, this, &QDialog::reject);
 
     auto* layout = new QVBoxLayout(this);
+    if (needsStitch) {
+        auto* notice = new QLabel(
+            "The video has not been stitched yet. Frames will be stitched "
+            "first, then exported.", this);
+        notice->setStyleSheet("color: #b8c4d0; font-style: italic;");
+        layout->addWidget(notice);
+    }
     layout->addLayout(form);
     layout->addWidget(buttons);
 }

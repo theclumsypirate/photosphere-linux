@@ -33,7 +33,8 @@ class ExportDialog : public QDialog {
 
 public:
     ExportDialog(double durationSeconds, double sourceFps,
-                 const QString& defaultOutput, QWidget* parent = nullptr);
+                 const QString& defaultOutput, bool needsStitch = false,
+                 QWidget* parent = nullptr);
 
     ExportDialogOptions options() const;
 

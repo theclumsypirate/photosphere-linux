@@ -742,7 +742,8 @@ void MainWindow::renderVideo() {
     const double duration = io::insvDuration(videoPath);
     const double sourceFps = io::insvFrameRate(videoPath);
     const QString defaultOutput = lastDir() + "/photosphere-export.mp4";
-    ExportDialog dialog(duration, sourceFps, defaultOutput, this);
+    const bool needsStitch = panorama_.empty();
+    ExportDialog dialog(duration, sourceFps, defaultOutput, needsStitch, this);
     if (dialog.exec() != QDialog::Accepted) return;
     const ExportDialogOptions dialogOptions = dialog.options();
     if (dialogOptions.output.isEmpty()) return;
