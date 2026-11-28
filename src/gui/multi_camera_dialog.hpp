@@ -30,16 +30,14 @@ private slots:
 
 protected:
     void closeEvent(QCloseEvent* event) override;
-    void resizeEvent(QResizeEvent* event) override;
 
 private:
     void build();
     void saveState();
     void restoreState();
-    void applyLayout();
 
     cv::Mat panorama_[2];
-    ViewerWidget* view_[2] = {nullptr, nullptr};
+    ViewerWidget* view_ = nullptr;
     QWidget* stage_ = nullptr;
     QCheckBox* pip_ = nullptr;
 };

@@ -27,11 +27,17 @@ public:
     ~ViewerWidget() override;
 
     void setPanorama(const cv::Mat& bgr);
+    void setSecondaryPanorama(const cv::Mat& bgr);
     void setView(double yawDegrees, double pitchDegrees, double fovDegrees);
+    void setSecondaryView(double yawDegrees, double pitchDegrees, double fovDegrees);
+    void setPipEnabled(bool enabled) { pipEnabled_ = enabled; update(); }
     void setOverlayButtonsVisible(bool visible);
     double yaw() const { return yaw_; }
     double pitch() const { return pitch_; }
     double fov() const { return fov_; }
+    double yaw2() const { return yaw2_; }
+    double pitch2() const { return pitch2_; }
+    double fov2() const { return fov2_; }
 
     // Captures exactly what is currently on screen, including the rotation.
     QPixmap currentView();
@@ -56,12 +62,18 @@ protected:
 private:
     void buildSphere();
     void updateProjection();
+    void updateProjection2();
     void updateViewMatrix();
+    void updateViewMatrix2();
+    QRect secondaryRect() const;
 
     QOpenGLShaderProgram program_;
     QOpenGLTexture texture_{QOpenGLTexture::Target2D};
+    QOpenGLTexture texture2_{QOpenGLTexture::Target2D};
     QMatrix4x4 projection_;
+    QMatrix4x4 projection2_;
     QMatrix4x4 view_;
+    QMatrix4x4 view2_;
     std::vector<float> vertices_;
     std::vector<unsigned int> indices_;
     unsigned int vbo_ = 0;
@@ -75,6 +87,13 @@ private:
     bool hasTexture_ = false;
     bool glReady_ = false;
     cv::Mat pendingPanorama_;
+    cv::Mat pendingSecondary_;
+    float yaw2_ = 0.0f;
+    float pitch2_ = 0.0f;
+    float fov2_ = 75.0f;
+    bool hasTexture2_ = false;
+    bool pipEnabled_ = false;
+    bool editingSecondary_ = false;
     QPushButton* snapshotButton_ = nullptr;
     QPushButton* savePanoButton_ = nullptr;
     QSlider* fovSlider_ = nullptr;

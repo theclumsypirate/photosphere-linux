@@ -179,6 +179,7 @@ void ViewerWidget::updateProjection() {
 void ViewerWidget::resizeGL(int w, int h) {
     glViewport(0, 0, w, h);
     updateProjection();
+    updateProjection2();
 }
 
 void ViewerWidget::paintGL() {
@@ -200,6 +201,28 @@ void ViewerWidget::paintGL() {
                    GL_UNSIGNED_INT, nullptr);
     vao_.release();
     program_.release();
+
+    if (!pendingSecondary_.empty()) {
+        const cv::Mat image = pendingSecondary_;
+        pendingSecondary_.release();
+        setSecondaryPanorama(image);
+    }
+    if (pipEnabled_ && hasTexture2_) {
+        const QRect rect = secondaryRect();
+        glViewport(rect.x(), height() - rect.y() - rect.height(),
+                   rect.width(), rect.height());
+        glClear(GL_DEPTH_BUFFER_BIT);
+        program_.bind();
+        program_.setUniformValue("uProjection", projection2_);
+        program_.setUniformValue("uView", view2_);
+        texture2_.bind(0);
+        program_.setUniformValue("uTexture", 0);
+        vao_.bind();
+        glDrawElements(GL_TRIANGLES, static_cast<GLsizei>(indices_.size()),
+                       GL_UNSIGNED_INT, nullptr);
+        vao_.release();
+        program_.release();
+    }
 }
 
 void ViewerWidget::setPanorama(const cv::Mat& bgr) {
@@ -273,6 +296,8 @@ void ViewerWidget::updateViewMatrix() {
 
 void ViewerWidget::mousePressEvent(QMouseEvent* event) {
     dragging_ = true;
+    editingSecondary_ = pipEnabled_ && hasTexture2_ &&
+                        secondaryRect().contains(event->pos());
     lastPos_ = event->pos();
 }
 
@@ -280,9 +305,12 @@ void ViewerWidget::mouseMoveEvent(QMouseEvent* event) {
     if (!dragging_) return;
     const QPoint delta = event->pos() - lastPos_;
     lastPos_ = event->pos();
-    yaw_ -= delta.x() * 0.3f;
-    pitch_ = std::clamp(pitch_ + delta.y() * 0.3f, -89.0f, 89.0f);
-    updateViewMatrix();
+    float& yaw = editingSecondary_ ? yaw2_ : yaw_;
+    float& pitch = editingSecondary_ ? pitch2_ : pitch_;
+    yaw -= delta.x() * 0.3f;
+    pitch = std::clamp(pitch + delta.y() * 0.3f, -89.0f, 89.0f);
+    if (editingSecondary_) updateViewMatrix2();
+    else updateViewMatrix();
     update();
 }
 
@@ -312,12 +340,77 @@ QPixmap ViewerWidget::currentView() {
 
 void ViewerWidget::wheelEvent(QWheelEvent* event) {
     const int steps = event->angleDelta().y() / 120;
-    fov_ = std::clamp(fov_ + steps * 5.0f, 15.0f, 120.0f);
-    if (fovSlider_) {
+    const bool secondary = pipEnabled_ && hasTexture2_ &&
+                           secondaryRect().contains(event->position().toPoint());
+    float& fov = secondary ? fov2_ : fov_;
+    fov = std::clamp(fov + steps * 5.0f, 15.0f, 120.0f);
+    if (!secondary && fovSlider_) {
         const QSignalBlocker blocker(fovSlider_);
-        fovSlider_->setValue(static_cast<int>(fov_));
+        fovSlider_->setValue(static_cast<int>(fov));
     }
-    updateProjection();
+    if (secondary) updateProjection2();
+    else updateProjection();
+    update();
+}
+
+
+QRect ViewerWidget::secondaryRect() const {
+    const int w = std::max(160, width() / 3);
+    const int h = std::max(90, height() / 3);
+    return QRect(width() - w - 8, height() - h - 8, w, h);
+}
+
+void ViewerWidget::updateProjection2() {
+    const QRect r = secondaryRect();
+    projection2_.setToIdentity();
+    projection2_.perspective(fov2_,
+                             static_cast<float>(r.width()) / std::max(1, r.height()),
+                             0.01f, 10.0f);
+}
+
+void ViewerWidget::updateViewMatrix2() {
+    const double yr = yaw2_ * 3.14159265358979323846 / 180.0;
+    const double pr = pitch2_ * 3.14159265358979323846 / 180.0;
+    const QVector3D direction(static_cast<float>(std::sin(yr) * std::cos(pr)),
+                              static_cast<float>(std::cos(yr) * std::cos(pr)),
+                              static_cast<float>(std::sin(pr)));
+    view2_.setToIdentity();
+    view2_.lookAt(QVector3D(0, 0, 0), direction, QVector3D(0, 0, 1));
+}
+
+void ViewerWidget::setSecondaryPanorama(const cv::Mat& bgr) {
+    if (bgr.empty()) return;
+    if (!glReady_) {
+        pendingSecondary_ = bgr.clone();
+        update();
+        return;
+    }
+    makeCurrent();
+    cv::Mat rgb;
+    cv::cvtColor(bgr, rgb, cv::COLOR_BGR2RGB);
+    if (!hasTexture2_ || texture2_.width() != rgb.cols ||
+        texture2_.height() != rgb.rows) {
+        texture2_.destroy();
+        texture2_.setSize(rgb.cols, rgb.rows);
+        texture2_.setFormat(QOpenGLTexture::RGB8_UNorm);
+        texture2_.allocateStorage();
+        hasTexture2_ = true;
+    }
+    texture2_.setData(QOpenGLTexture::RGB, QOpenGLTexture::UInt8, rgb.data);
+    texture2_.setMinificationFilter(QOpenGLTexture::Linear);
+    texture2_.setMagnificationFilter(QOpenGLTexture::Linear);
+    texture2_.setWrapMode(QOpenGLTexture::Repeat);
+    doneCurrent();
+    update();
+}
+
+void ViewerWidget::setSecondaryView(double yawDegrees, double pitchDegrees,
+                                    double fovDegrees) {
+    yaw2_ = static_cast<float>(yawDegrees);
+    pitch2_ = static_cast<float>(std::clamp(pitchDegrees, -89.0, 89.0));
+    fov2_ = static_cast<float>(std::clamp(fovDegrees, 15.0, 120.0));
+    updateProjection2();
+    updateViewMatrix2();
     update();
 }
 
