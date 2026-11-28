@@ -2,6 +2,7 @@
 
 #include <opencv2/core.hpp>
 
+#include <atomic>
 #include <functional>
 #include <vector>
 
@@ -31,6 +32,7 @@ struct RenderOptions {
     double centerLatitudeDegrees = 0.0;
     double pivotRatio = 0.0;
     bool multiband = true;
+    const std::atomic<bool>* cancelFlag = nullptr;
     std::function<void(int, int)> onProgress;
 };
 

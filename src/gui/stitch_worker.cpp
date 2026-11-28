@@ -10,8 +10,13 @@ StitchWorker::StitchWorker(QObject* parent) : QObject(parent) {}
 
 void StitchWorker::setOptions(const Options& options) { options_ = options; }
 
+void StitchWorker::setCancelFlag(std::atomic<bool>* flag) { cancelFlag_ = flag; }
+
 void StitchWorker::run() {
     diagnostics_.clear();
+    auto cancelled = [this]() { return cancelFlag_ && cancelFlag_->load(); };
+    if (cancelled()) { emit finished(false, "Stitching cancelled"); return; }
+    options_.stitch.cancelFlag = cancelFlag_;
     emit progress(1, 10, "Loading inputs...");
     io::InputSession session;
     if (!io::loadInputs(options_.paths, session, diagnostics_,
@@ -36,6 +41,10 @@ void StitchWorker::run() {
         diagnostics_ = std::string("exception: ") + e.what();
     }
     if (result_.equirect.empty()) {
+        if (cancelled()) {
+            emit finished(false, "Stitching cancelled");
+            return;
+        }
         emit finished(false, diagnostics_.empty() ? "Stitch failed"
                                                  : QString::fromStdString(diagnostics_));
         return;

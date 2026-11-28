@@ -21,7 +21,7 @@ ExportDialog::ExportDialog(double durationSeconds, double sourceFps,
     setMinimumWidth(480);
 
     widthSpin_ = new QSpinBox(this);
-    widthSpin_->setRange(512, 16384);
+    widthSpin_->setRange(512, 8192);
     widthSpin_->setSingleStep(512);
     widthSpin_->setValue(2048);
     widthSpin_->setSuffix(" px");

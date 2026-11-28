@@ -84,6 +84,7 @@ private:
     QThread* stitchThread_ = nullptr;
     QThread* hdrThread_ = nullptr;
     QProgressDialog* stitchProgress_ = nullptr;
+    std::atomic<bool> stitchCancel_{false};
     QThread* exportThread_ = nullptr;
     QProgressDialog* exportProgress_ = nullptr;
     std::atomic<bool> exportCancel_{false};

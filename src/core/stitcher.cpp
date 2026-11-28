@@ -49,7 +49,7 @@ LensBasis lensBasis(int lens) {
 
 void accumulateFisheyeLevel(const cv::Mat& image, int lens, double fovDegrees,
                             bool flipLenses, cv::Mat& colorSum, cv::Mat& weightSum,
-                            int divisor) {
+                            int divisor, const std::atomic<bool>* cancel = nullptr) {
     if (image.empty()) return;
     cv::Mat source;
     if (divisor > 1) {
@@ -87,6 +87,7 @@ void accumulateFisheyeLevel(const cv::Mat& image, int lens, double fovDegrees,
             dY[col] = std::cos(lon);
         }
         for (int row = 0; row < h; ++row) {
+            if (cancel && cancel->load()) return;
             const double lat = equirect::latitudeDegrees(row, h) * kPi / 180.0;
             const double cl = std::cos(lat), sl = std::sin(lat);
             auto* mx = maps.mapX.ptr<float>(row);
@@ -204,12 +205,15 @@ Panorama stitchDualFisheye(const std::vector<LensFrame>& pair,
         cv::Mat weightB = cv::Mat::zeros(lh, lw, CV_32FC1);
         const int divisor = 1 << level;
         accumulateFisheyeLevel(*images[0], 0, options.fisheyeFovDegrees,
-                               options.flipLenses, colorA, weightA, divisor);
+                               options.flipLenses, colorA, weightA, divisor,
+                               options.cancelFlag);
         accumulateFisheyeLevel(*images[1], 1, options.fisheyeFovDegrees,
-                               options.flipLenses, colorB, weightB, divisor);
+                               options.flipLenses, colorB, weightB, divisor,
+                               options.cancelFlag);
         PyramidLevel pl;
         pl.color = cv::Mat(lh, lw, CV_32FC3);
         pl.weight = cv::Mat(lh, lw, CV_32FC1);
+        if (options.cancelFlag && options.cancelFlag->load()) return {};
         combineLenses(colorA, weightA, colorB, weightB, pl.color, pl.weight);
         pyramid.push_back(std::move(pl));
         if (options.onProgress) options.onProgress(level + 1, levels);
@@ -353,6 +357,7 @@ Panorama stitchMultiFrame(const std::vector<LensFrame>& frames,
     ro.width = options.width;
     ro.multiband = options.multiband;
     ro.onProgress = options.onProgress;
+    ro.cancelFlag = options.cancelFlag;
     diagnostics += ", gain";
     return renderPanorama(prepared, ro, activeSeams);
 }
@@ -419,6 +424,7 @@ Panorama stitchSession(const io::InputSession& session,
     RenderOptions ro;
     ro.width = options.width;
     ro.multiband = options.multiband;
+    ro.cancelFlag = options.cancelFlag;
     Panorama out = renderPanorama(frames, ro);
     diagnostics = "generic ring, " + std::to_string(frames.size()) + " frames";
     return out;

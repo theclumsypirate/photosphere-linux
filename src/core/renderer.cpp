@@ -20,6 +20,7 @@ void accumulateLevel(const std::vector<PreparedFrame>& frames,
     const int divisor = 1 << level;
     const int w = colorSum.cols, h = colorSum.rows;
     const int interpolation = level == 0 ? cv::INTER_LANCZOS4 : cv::INTER_LINEAR;
+    if (options.cancelFlag && options.cancelFlag->load()) return;
 
     std::vector<double> forwardH(w), rightH(w), upH(w);
     for (size_t fi = 0; fi < frames.size(); ++fi) {
@@ -53,6 +54,7 @@ void accumulateLevel(const std::vector<PreparedFrame>& frames,
 
         cv::Mat mapX(h, w, CV_32FC1), mapY(h, w, CV_32FC1), weights(h, w, CV_32FC1);
         for (int row = 0; row < h; ++row) {
+            if (options.cancelFlag && options.cancelFlag->load()) break;
             const double lat = equirect::latitudeDegrees(
                 row, h, options.latitudeSpanDegrees, options.centerLatitudeDegrees);
             const double r = lat * M_PI / 180.0;
@@ -128,11 +130,13 @@ Panorama renderPanorama(const std::vector<PreparedFrame>& frames,
     pyramid.reserve(levels);
     double covered = 0.0;
     for (int level = 0; level < levels; ++level) {
+        if (options.cancelFlag && options.cancelFlag->load()) return {};
         const auto [lw, lh] = levelSize(width, height, level);
         PyramidLevel pl;
         pl.color = cv::Mat::zeros(lh, lw, CV_32FC3);
         pl.weight = cv::Mat::zeros(lh, lw, CV_32FC1);
         accumulateLevel(frames, pl.color, pl.weight, options, level, seams, covered);
+        if (options.cancelFlag && options.cancelFlag->load()) return {};
         pyramid.push_back(std::move(pl));
         if (options.onProgress) options.onProgress(level + 1, levels);
     }

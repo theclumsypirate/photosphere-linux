@@ -151,6 +151,25 @@ QString lastDir() {
 
 } // namespace
 
+namespace {
+
+bool confirmHighResolution(QWidget* parent, int width) {
+    if (width < 6000) return true;
+    QMessageBox box(parent);
+    box.setIcon(QMessageBox::Warning);
+    box.setWindowTitle("High resolution");
+    box.setText("Are you sure you want to do this?");
+    box.setInformativeText(
+        QString("Working at %1 px is very hard for weak devices or devices "
+                "without a GPU. It may take a long time or run out of memory.")
+            .arg(width));
+    box.setStandardButtons(QMessageBox::Yes | QMessageBox::No);
+    box.setDefaultButton(QMessageBox::No);
+    return box.exec() == QMessageBox::Yes;
+}
+
+} // namespace
+
 MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent) {
     setWindowTitle("Photosphere Linux");
     setWindowIcon(QIcon(":/icons/icon.png"));
@@ -204,7 +223,7 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent) {
     left->addWidget(stitchButton);
 
     widthSpin_ = new QSpinBox(controls);
-    widthSpin_->setRange(1024, 16384);
+    widthSpin_->setRange(1024, 8192);
     widthSpin_->setSingleStep(1024);
     widthSpin_->setValue(4096);
     left->addWidget(new QLabel("Panorama width"));
@@ -588,6 +607,7 @@ void MainWindow::runStitch() {
         QMessageBox::warning(this, "No input", "Add at least one file.");
         return;
     }
+    if (!confirmHighResolution(this, widthSpin_->value())) return;
 
     StitchWorker::Options options;
     options.paths = paths;
@@ -609,7 +629,9 @@ void MainWindow::runStitch() {
     worker->moveToThread(stitchThread_);
     worker->setOptions(options);
 
-    stitchProgress_ = new QProgressDialog("Preparing stitch...", QString(), 0, 10, this);
+    stitchCancel_ = false;
+    worker->setCancelFlag(&stitchCancel_);
+    stitchProgress_ = new QProgressDialog("Preparing stitch...", "Cancel", 0, 10, this);
     stitchProgress_->setWindowModality(Qt::WindowModal);
     stitchProgress_->setMinimumDuration(0);
     stitchProgress_->setValue(0);
@@ -628,7 +650,7 @@ void MainWindow::runStitch() {
                     panorama_ = worker->result().equirect;
                     viewer_->setPanorama(panorama_);
                     viewer_->resetView();
-                } else if (!ok) {
+                } else if (!ok && message != "Stitching cancelled") {
                     QMessageBox::critical(this, "Stitch failed", message);
                 }
                 setStatus(message);
@@ -724,6 +746,7 @@ void MainWindow::renderVideo() {
     if (dialog.exec() != QDialog::Accepted) return;
     const ExportDialogOptions dialogOptions = dialog.options();
     if (dialogOptions.output.isEmpty()) return;
+    if (!confirmHighResolution(this, dialogOptions.width)) return;
 
     VideoExportWorker::Options options;
     options.input = videoPath;

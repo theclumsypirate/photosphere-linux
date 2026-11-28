@@ -1,5 +1,6 @@
 #pragma once
 
+#include <atomic>
 #include <functional>
 #include <string>
 #include <vector>
@@ -23,6 +24,7 @@ struct StitchOptions {
     std::function<void(int, int)> onProgress;
     bool linearOutput = false;
     int maxFrames = 0;
+    const std::atomic<bool>* cancelFlag = nullptr;
 };
 
 // Chooses between the dual fisheye path (Insta360 DNG/JPG/INSV) and the

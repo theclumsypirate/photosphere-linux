@@ -3,6 +3,8 @@
 #include <QObject>
 #include <QString>
 
+#include <atomic>
+
 #include "core/stitcher.hpp"
 #include "core/types.hpp"
 
@@ -24,6 +26,7 @@ public:
     explicit StitchWorker(QObject* parent = nullptr);
 
     void setOptions(const Options& options);
+    void setCancelFlag(std::atomic<bool>* flag);
     const Panorama& result() const { return result_; }
     const std::string& diagnostics() const { return diagnostics_; }
 
@@ -38,6 +41,7 @@ private:
     Options options_;
     Panorama result_;
     std::string diagnostics_;
+    std::atomic<bool>* cancelFlag_ = nullptr;
 };
 
 } // namespace ps::gui
