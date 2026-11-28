@@ -251,7 +251,7 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent) {
     auto* autoButton = new QPushButton("Auto stitch all files", controls);
     autoButton->setStyleSheet("font-weight: bold;");
     auto* fullscreenButton = new QPushButton("Fullscreen preview", controls);
-    auto* gpuPreviewButton = new QPushButton("GPU fisheye preview", controls);
+    auto* gpuPreviewButton = new QPushButton("Video preview", controls);
     auto* savePano = new QPushButton("Save panorama", controls);
     auto* multiCamButton = new QPushButton("Multi-camera view", controls);
     auto* savePlanet = new QPushButton("Little planet editor", controls);
@@ -893,8 +893,18 @@ void MainWindow::openShaderPreview() {
 }
 
 void MainWindow::openMultiCamera() {
+    std::string videoPath;
+    for (const auto& path : inputPaths())
+        if (io::isVideoFile(path)) { videoPath = path; break; }
+    if (!videoPath.empty()) {
+        auto* dialog = new MultiCameraDialog(QString::fromStdString(videoPath),
+                                             this);
+        dialog->setAttribute(Qt::WA_DeleteOnClose, true);
+        dialog->show();
+        return;
+    }
     if (panorama_.empty()) {
-        QMessageBox::warning(this, "Nothing to show", "Stitch first.");
+        QMessageBox::warning(this, "Nothing to show", "Stitch first or add a video.");
         return;
     }
     auto* dialog = new MultiCameraDialog(panorama_, this);

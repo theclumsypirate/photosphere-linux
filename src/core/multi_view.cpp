@@ -72,4 +72,35 @@ cv::Mat renderPipView(const cv::Mat& equirect, const VirtualCamera& main,
     return out;
 }
 
+cv::Mat renderSplitView(const cv::Mat& first, const VirtualCamera& a,
+                        const cv::Mat& second, const VirtualCamera& b,
+                        int width, int height) {
+    const cv::Mat left = renderVirtualView(first, a, width / 2, height);
+    const cv::Mat right = renderVirtualView(second, b, width / 2, height);
+    if (left.empty() || right.empty()) return {};
+    cv::Mat out(height, width, left.type());
+    left.copyTo(out(cv::Rect(0, 0, width / 2, height)));
+    right.copyTo(out(cv::Rect(width / 2, 0, width - width / 2, height)));
+    cv::line(out, cv::Point(width / 2, 0), cv::Point(width / 2, height - 1),
+             cv::Scalar(30, 32, 36), 2);
+    return out;
+}
+
+cv::Mat renderPipView(const cv::Mat& first, const VirtualCamera& main,
+                      const cv::Mat& second, const VirtualCamera& inset,
+                      int width, int height, double insetFraction) {
+    cv::Mat out = renderVirtualView(first, main, width, height);
+    if (out.empty()) return {};
+    const int insetW = std::max(96, static_cast<int>(width * insetFraction));
+    const int insetH = std::max(64, static_cast<int>(height * insetFraction));
+    const cv::Mat small = renderVirtualView(second, inset, insetW, insetH);
+    if (small.empty()) return out;
+    const int x = width - insetW - 16;
+    const int y = height - insetH - 16;
+    small.copyTo(out(cv::Rect(x, y, insetW, insetH)));
+    cv::rectangle(out, cv::Rect(x, y, insetW, insetH),
+                  cv::Scalar(30, 32, 36), 3);
+    return out;
+}
+
 } // namespace ps

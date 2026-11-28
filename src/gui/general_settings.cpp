@@ -87,7 +87,7 @@ GeneralSettingsDialog::GeneralSettingsDialog(QWidget* parent) : QDialog(parent) 
     forceX11Check_->setChecked(current.forceX11);
     softwareCheck_ = new QCheckBox("Disable graphics acceleration (software rendering)", this);
     softwareCheck_->setChecked(current.softwareRendering);
-    gpuCheck_ = new QCheckBox("Prefer GPU for video export when available", this);
+    gpuCheck_ = new QCheckBox("Use GPU when available (video decode and preview)", this);
     gpuCheck_->setChecked(current.preferGpu);
 
     auto* form = new QFormLayout();

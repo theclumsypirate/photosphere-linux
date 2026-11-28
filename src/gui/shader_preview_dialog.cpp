@@ -14,7 +14,7 @@ namespace ps::gui {
 ShaderPreviewDialog::ShaderPreviewDialog(const QString& videoPath, double lensFov,
                                          QWidget* parent)
     : QDialog(parent) {
-    setWindowTitle("GPU fisheye preview");
+    setWindowTitle("Video preview");
     resize(1100, 700);
 
     viewer_ = new ShaderViewer(this);
