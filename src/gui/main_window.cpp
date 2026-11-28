@@ -512,16 +512,32 @@ void MainWindow::addFolder() {
 
 void MainWindow::openGeneralSettings() {
     GeneralSettingsDialog dialog(this);
+    bool needsRestart = false;
+    connect(&dialog, &GeneralSettingsDialog::restartRequested, this,
+            [&needsRestart]() { needsRestart = true; });
     if (dialog.exec() == QDialog::Accepted) {
         appSettings_ = dialog.settings();
         saveAppSettings(appSettings_);
         io::setRawOptions({appSettings_.exposureEV, appSettings_.autoBright});
         io::Mp4Writer::setPreferHardwareEncoder(appSettings_.preferGpu);
-        setStatus("Settings saved. Restart the app for display backend changes. "
-                  "File explorer: " +
+        setStatus("Settings saved. File explorer: " +
                   (appSettings_.fileExplorer == "external"
                        ? appSettings_.externalCommand
                        : "Qt file dialog"));
+        if (needsRestart) {
+            QMessageBox box(this);
+            box.setWindowTitle("Restart required");
+            box.setText("The GPU or display backend setting changes on the next start.");
+            box.setInformativeText("Restart Photosphere now?");
+            auto* restart = box.addButton("Restart now", QMessageBox::AcceptRole);
+            box.addButton("Later", QMessageBox::RejectRole);
+            box.exec();
+            if (box.clickedButton() == restart) {
+                const QString program = QCoreApplication::applicationFilePath();
+                QProcess::startDetached(program, QStringList());
+                QCoreApplication::quit();
+            }
+        }
     }
 }
 

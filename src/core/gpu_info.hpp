@@ -6,7 +6,7 @@ namespace ps {
 
 enum class GpuVendor { Unknown, Nvidia, Amd, Intel };
 
-enum class DecodeBackend { Cpu, Vaapi, Cuda, Qsv, Vulkan };
+enum class DecodeBackend { Cpu, Vaapi, Cuda, Qsv };
 
 struct GpuInfo {
     GpuVendor vendor = GpuVendor::Unknown;

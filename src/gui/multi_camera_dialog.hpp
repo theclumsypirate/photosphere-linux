@@ -36,11 +36,14 @@ private slots:
     void onTimeChanged(int value);
 
 protected:
+    void closeEvent(QCloseEvent* event) override;
     void mousePressEvent(QMouseEvent* event) override;
     void mouseMoveEvent(QMouseEvent* event) override;
 
 private:
     void build();
+    void saveState();
+    void restoreState();
     void schedulePreview();
     cv::Mat currentPanorama() const;
     struct Camera {

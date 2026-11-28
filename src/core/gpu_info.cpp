@@ -77,8 +77,6 @@ GpuInfo detectGpu() {
 }
 
 DecodeBackend GpuInfo::preferredDecodeBackend() const {
-    if (hasVulkanIcd && std::getenv("PS_USE_VULKAN"))
-        return DecodeBackend::Vulkan;
     if (hasNvidiaDevice || vendor == GpuVendor::Nvidia || opencvCudaDevices > 0)
         return DecodeBackend::Cuda;
     if (hasQsvLibrary && hasDrmRenderNode && vendor == GpuVendor::Intel)
@@ -102,7 +100,6 @@ const char* toString(DecodeBackend backend) {
         case DecodeBackend::Cuda: return "CUDA/NVDEC";
         case DecodeBackend::Vaapi: return "VA-API";
         case DecodeBackend::Qsv: return "Intel QSV";
-        case DecodeBackend::Vulkan: return "Vulkan (experimental)";
         default: return "CPU";
     }
 }

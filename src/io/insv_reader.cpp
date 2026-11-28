@@ -48,7 +48,6 @@ AVHWDeviceType hwDeviceType(DecodeBackend backend) {
     switch (backend) {
         case DecodeBackend::Cuda: return AV_HWDEVICE_TYPE_CUDA;
         case DecodeBackend::Qsv: return AV_HWDEVICE_TYPE_QSV;
-        case DecodeBackend::Vulkan: return AV_HWDEVICE_TYPE_VULKAN;
         default: return AV_HWDEVICE_TYPE_VAAPI;
     }
 }
@@ -98,6 +97,34 @@ bool openSoftwareDecoder(DecoderState& state, const AVCodec* codec,
     return true;
 }
 
+void releaseDecoder(DecoderState& state);
+
+// A hardware decoder can open successfully but fail on the first real frame.
+// In that case drop it and continue on the CPU instead of repeating the error.
+bool fallbackToSoftware(DecoderState& state, const AVCodec* codec,
+                        AVCodecParameters* parameters) {
+    if (!state.hardware) return false;
+    releaseDecoder(state);
+    return openSoftwareDecoder(state, codec, parameters);
+}
+
+// Tries the preferred backend, then the other hardware paths, then software.
+bool openBestDecoder(DecoderState& state, const AVCodec* codec,
+                     AVCodecParameters* parameters, DecodeBackend preferred) {
+    const DecodeBackend candidates[] = {preferred, DecodeBackend::Qsv,
+                                        DecodeBackend::Vaapi, DecodeBackend::Cuda};
+    for (size_t i = 0; i < sizeof(candidates) / sizeof(candidates[0]); ++i) {
+        const DecodeBackend backend = candidates[i];
+        if (backend == DecodeBackend::Cpu) continue;
+        bool seen = false;
+        for (size_t j = 0; j < i; ++j)
+            if (candidates[j] == backend) seen = true;
+        if (seen) continue;
+        if (openHardwareDecoder(state, codec, parameters, backend)) return true;
+    }
+    return openSoftwareDecoder(state, codec, parameters);
+}
+
 // ffmpeg still reports full range HEVC as the deprecated YUVJ formats.
 // Swscale warns about them, so use the equivalent non deprecated format and
 // tell swscale the source is full range.
@@ -132,6 +159,11 @@ void releaseDecoder(DecoderState& state) {
     if (state.sws) sws_freeContext(state.sws);
     if (state.codec) avcodec_free_context(&state.codec);
     if (state.hwDevice) av_buffer_unref(&state.hwDevice);
+    state.sws = nullptr;
+    state.codec = nullptr;
+    state.hwDevice = nullptr;
+    state.hwFormat = AV_PIX_FMT_NONE;
+    state.hardware = false;
 }
 
 } // namespace
@@ -286,8 +318,7 @@ bool decodeAtTimes(const std::string& path, const std::vector<double>& times,
         const AVCodec* codec = avcodec_find_decoder(ctx->streams[streams[k]]->codecpar->codec_id);
         if (!codec) { error = "missing decoder"; break; }
         AVCodecParameters* parameters = ctx->streams[streams[k]]->codecpar;
-        if (!openHardwareDecoder(decoders[k], codec, parameters, backend) &&
-            !openSoftwareDecoder(decoders[k], codec, parameters)) {
+        if (!openBestDecoder(decoders[k], codec, parameters, backend)) {
             error = "cannot initialise decoder";
             break;
         }
@@ -317,7 +348,13 @@ bool decodeAtTimes(const std::string& path, const std::vector<double>& times,
             if (it == streams.end()) { av_packet_unref(packet); continue; }
             const size_t track = static_cast<size_t>(it - streams.begin());
             const size_t decoderIndex = std::min(track, decoders.size() - 1);
-            if (avcodec_send_packet(decoders[decoderIndex].codec, packet) < 0) {
+            DecoderState& decoder = decoders[decoderIndex];
+            AVCodecParameters* params = ctx->streams[packet->stream_index]->codecpar;
+            const AVCodec* videoCodec = avcodec_find_decoder(params->codec_id);
+            int sent = avcodec_send_packet(decoder.codec, packet);
+            if (sent < 0 && fallbackToSoftware(decoder, videoCodec, params))
+                sent = avcodec_send_packet(decoder.codec, packet);
+            if (sent < 0) {
                 av_packet_unref(packet);
                 continue;
             }
@@ -373,6 +410,9 @@ bool decodeAtTimes(const std::string& path, const std::vector<double>& times,
                 for (bool f : found) if (!f) all = false;
                 if (all) break;
             }
+            if (rr < 0 && rr != AVERROR(EAGAIN) && rr != AVERROR_EOF &&
+                fallbackToSoftware(decoder, videoCodec, params))
+                avcodec_flush_buffers(decoder.codec);
             av_packet_unref(packet);
             bool all = true;
             for (bool f : found) if (!f) all = false;
@@ -453,8 +493,7 @@ bool readInsv(const std::string& path, std::vector<LensFrame>& out,
         AVStream* stream = ctx->streams[videoStreams[k]];
         const AVCodec* codec = avcodec_find_decoder(stream->codecpar->codec_id);
         if (!codec) { error = "missing decoder for INSV video"; break; }
-        if (!openHardwareDecoder(decoders[k], codec, stream->codecpar, backend) &&
-            !openSoftwareDecoder(decoders[k], codec, stream->codecpar)) {
+        if (!openBestDecoder(decoders[k], codec, stream->codecpar, backend)) {
             error = "cannot initialise INSV decoder";
             break;
         }
@@ -479,7 +518,12 @@ bool readInsv(const std::string& path, std::vector<LensFrame>& out,
         const size_t lens = static_cast<size_t>(it - videoStreams.begin());
         if (lens >= decoders.size()) { av_packet_unref(packet); continue; }
         DecoderState& decoder = decoders[lens];
-        if (avcodec_send_packet(decoder.codec, packet) < 0) { av_packet_unref(packet); continue; }
+        AVCodecParameters* params = ctx->streams[packet->stream_index]->codecpar;
+        const AVCodec* videoCodec = avcodec_find_decoder(params->codec_id);
+        int sent = avcodec_send_packet(decoder.codec, packet);
+        if (sent < 0 && fallbackToSoftware(decoder, videoCodec, params))
+            sent = avcodec_send_packet(decoder.codec, packet);
+        if (sent < 0) { av_packet_unref(packet); continue; }
         int receiveResult = 0;
         while ((receiveResult = avcodec_receive_frame(decoder.codec, frame)) == 0) {
             // Decimation is per lens. The two tracks are interleaved, so a
@@ -526,6 +570,10 @@ bool readInsv(const std::string& path, std::vector<LensFrame>& out,
             ++decodedCount[lens];
             av_frame_unref(frame);
         }
+        if (receiveResult < 0 && receiveResult != AVERROR(EAGAIN) &&
+            receiveResult != AVERROR_EOF &&
+            fallbackToSoftware(decoder, videoCodec, params))
+            avcodec_flush_buffers(decoder.codec);
         av_packet_unref(packet);
         if (maxFrames > 0) {
             bool allReady = true;
@@ -597,10 +645,8 @@ bool streamInsvSequential(const std::string& path, double fromSeconds,
         const AVCodec* codec = avcodec_find_decoder(
             ctx->streams[streams[k]]->codecpar->codec_id);
         if (!codec) { error = "missing video decoder"; break; }
-        if (!openHardwareDecoder(decoders[k], codec,
-                                 ctx->streams[streams[k]]->codecpar, backend) &&
-            !openSoftwareDecoder(decoders[k], codec,
-                                 ctx->streams[streams[k]]->codecpar)) {
+        if (!openBestDecoder(decoders[k], codec,
+                             ctx->streams[streams[k]]->codecpar, backend)) {
             error = "cannot initialise video decoder";
             break;
         }
@@ -628,7 +674,12 @@ bool streamInsvSequential(const std::string& path, double fromSeconds,
         const size_t lens = static_cast<size_t>(it - streams.begin());
         if (lens >= decoders.size()) { av_packet_unref(packet); continue; }
         DecoderState& decoder = decoders[lens];
-        if (avcodec_send_packet(decoder.codec, packet) < 0) {
+        AVCodecParameters* params = ctx->streams[packet->stream_index]->codecpar;
+        const AVCodec* videoCodec = avcodec_find_decoder(params->codec_id);
+        int sent = avcodec_send_packet(decoder.codec, packet);
+        if (sent < 0 && fallbackToSoftware(decoder, videoCodec, params))
+            sent = avcodec_send_packet(decoder.codec, packet);
+        if (sent < 0) {
             av_packet_unref(packet);
             continue;
         }
@@ -682,6 +733,10 @@ bool streamInsvSequential(const std::string& path, double fromSeconds,
                 ready[0] = ready[1] = false;
             }
         }
+        if (received < 0 && received != AVERROR(EAGAIN) &&
+            received != AVERROR_EOF &&
+            fallbackToSoftware(decoder, videoCodec, params))
+            avcodec_flush_buffers(decoder.codec);
         av_packet_unref(packet);
     }
     av_frame_free(&frame);
