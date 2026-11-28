@@ -39,7 +39,13 @@ ShaderPreviewDialog::ShaderPreviewDialog(const QString& videoPath, double lensFo
     controls->addWidget(slider_, 1);
     controls->addWidget(timeLabel_);
 
+    auto* notice = new QLabel(
+        "NOTICE: this preview is low quality on purpose so it can be faster.",
+        this);
+    notice->setStyleSheet("color: #b8c4d0; font-style: italic;");
+
     auto* layout = new QVBoxLayout(this);
+    layout->addWidget(notice);
     layout->addWidget(viewer_, 1);
     layout->addLayout(controls);
     layout->addWidget(statusLabel_);
