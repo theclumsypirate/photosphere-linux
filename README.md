@@ -27,7 +27,7 @@ This is a simple app with a GUI for automatic stitching images or videos.
 
 
 ## Install it from here
-- Grab the latest Appimage from [GitHub Releases](https://github.com/theclumsypirate/photosphere-linux/releases/latest)
+- Grab the latest AppImage from [GitHub Releases](https://github.com/theclumsypirate/photosphere-linux/releases/latest)
 
 ## Credits
 
