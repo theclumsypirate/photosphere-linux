@@ -9,6 +9,8 @@
 #include <atomic>
 #include <filesystem>
 #include <fstream>
+#include <map>
+#include <mutex>
 #include <vector>
 
 #ifdef PS_HAVE_FFMPEG
@@ -45,6 +47,7 @@ struct DecoderState {
     AVBufferRef* hwDevice = nullptr;
     AVPixelFormat hwFormat = AV_PIX_FMT_NONE;
     HwFormatHolder holder;
+    const AVCodec* codecInfo = nullptr;
     bool hardware = false;
 };
 
@@ -127,7 +130,7 @@ bool fallbackToSoftware(DecoderState& state, const AVCodec* codec,
                         AVCodecParameters* parameters) {
     if (!state.hardware) return false;
     hardwareDecodeUnavailable = true;
-    markHardwareDecodeFailed(gpuDecodeSignature(detectGpu()));
+    markHardwareDecodeFailed(gpuDecodeSignature(cachedGpu()));
     releaseDecoder(state);
     return openSoftwareDecoder(state, codec, parameters);
 }
@@ -136,7 +139,7 @@ bool fallbackToSoftware(DecoderState& state, const AVCodec* codec,
 bool openBestDecoder(DecoderState& state, const AVCodec* codec,
                      AVCodecParameters* parameters, DecodeBackend preferred) {
     if (hardwareDecodeUnavailable ||
-        hardwareDecodeFailed(gpuDecodeSignature(detectGpu())))
+        hardwareDecodeFailed(gpuDecodeSignature(cachedGpu())))
         return openSoftwareDecoder(state, codec, parameters);
     const DecodeBackend candidates[] = {preferred, DecodeBackend::Qsv,
                                         DecodeBackend::Vaapi, DecodeBackend::Cuda};
@@ -147,9 +150,14 @@ bool openBestDecoder(DecoderState& state, const AVCodec* codec,
         for (size_t j = 0; j < i; ++j)
             if (candidates[j] == backend) seen = true;
         if (seen) continue;
-        if (openHardwareDecoder(state, codec, parameters, backend)) return true;
+        if (openHardwareDecoder(state, codec, parameters, backend)) {
+            state.codecInfo = codec;
+            return true;
+        }
     }
-    return openSoftwareDecoder(state, codec, parameters);
+    if (!openSoftwareDecoder(state, codec, parameters)) return false;
+    state.codecInfo = codec;
+    return true;
 }
 
 // ffmpeg still reports full range HEVC as the deprecated YUVJ formats.
@@ -221,27 +229,60 @@ bool isVideoFile(const std::string& path) {
 
 bool isInsvFile(const std::string& path) { return isVideoFile(path); }
 
+#ifdef PS_HAVE_FFMPEG
+struct VideoProbe {
+    double fps = 25.0;
+    double duration = 0.0;
+    bool eac = false;
+};
+
+const VideoProbe& probeVideo(const std::string& path) {
+    static std::mutex mutex;
+    static std::map<std::string, VideoProbe> cache;
+    std::lock_guard<std::mutex> lock(mutex);
+    const auto cached = cache.find(path);
+    if (cached != cache.end()) return cached->second;
+
+    VideoProbe probe;
+    AVFormatContext* ctx = nullptr;
+    if (avformat_open_input(&ctx, path.c_str(), nullptr, nullptr) >= 0 &&
+        avformat_find_stream_info(ctx, nullptr) >= 0) {
+        if (ctx->duration != AV_NOPTS_VALUE)
+            probe.duration = static_cast<double>(ctx->duration) / AV_TIME_BASE;
+        int videoCount = 0;
+        int width = 0, height = 0;
+        bool sameSize = true;
+        for (unsigned i = 0; i < ctx->nb_streams; ++i) {
+            AVStream* stream = ctx->streams[i];
+            AVCodecParameters* p = stream->codecpar;
+            if (p->codec_type != AVMEDIA_TYPE_VIDEO) continue;
+            ++videoCount;
+            if (videoCount == 1) {
+                width = p->width;
+                height = p->height;
+                if (stream->avg_frame_rate.num > 0 && stream->avg_frame_rate.den > 0)
+                    probe.fps = av_q2d(stream->avg_frame_rate);
+                if (probe.duration <= 0.0 && stream->duration != AV_NOPTS_VALUE)
+                    probe.duration = static_cast<double>(stream->duration) *
+                                     av_q2d(stream->time_base);
+            } else if (p->width != width || p->height != height) {
+                sameSize = false;
+            }
+        }
+        probe.eac = videoCount == 2 && sameSize && isEacFrameSize(width, height);
+    }
+    if (ctx) avformat_close_input(&ctx);
+    return cache.emplace(path, probe).first->second;
+}
+
+#endif
+
 double insvFrameRate(const std::string& path) {
 #ifndef PS_HAVE_FFMPEG
     (void)path;
     return 25.0;
 #else
-    AVFormatContext* ctx = nullptr;
-    if (avformat_open_input(&ctx, path.c_str(), nullptr, nullptr) < 0) return 25.0;
-    if (avformat_find_stream_info(ctx, nullptr) < 0) {
-        avformat_close_input(&ctx);
-        return 25.0;
-    }
-    double rate = 25.0;
-    for (unsigned i = 0; i < ctx->nb_streams; ++i) {
-        AVStream* s = ctx->streams[i];
-        if (s->codecpar->codec_type == AVMEDIA_TYPE_VIDEO &&
-            s->avg_frame_rate.num > 0 && s->avg_frame_rate.den > 0) {
-            rate = av_q2d(s->avg_frame_rate);
-            break;
-        }
-    }
-    avformat_close_input(&ctx);
+    const double rate = probeVideo(path).fps;
     return rate > 0.0 && rate < 1000.0 ? rate : 25.0;
 #endif
 }
@@ -251,27 +292,7 @@ double insvDuration(const std::string& path) {
     (void)path;
     return 0.0;
 #else
-    AVFormatContext* ctx = nullptr;
-    if (avformat_open_input(&ctx, path.c_str(), nullptr, nullptr) < 0) return 0.0;
-    double duration = 0.0;
-    if (avformat_find_stream_info(ctx, nullptr) >= 0) {
-        if (ctx->duration != AV_NOPTS_VALUE)
-            duration = static_cast<double>(ctx->duration) / AV_TIME_BASE;
-        if (duration <= 0.0)
-            for (unsigned i = 0; i < ctx->nb_streams; ++i) {
-                AVStream* stream = ctx->streams[i];
-                if (stream->codecpar->codec_type != AVMEDIA_TYPE_VIDEO) continue;
-                if (stream->duration != AV_NOPTS_VALUE)
-                    duration = static_cast<double>(stream->duration) *
-                               av_q2d(stream->time_base);
-                else if (stream->avg_frame_rate.num > 0 && stream->nb_frames > 0)
-                    duration = static_cast<double>(stream->nb_frames) /
-                               av_q2d(stream->avg_frame_rate);
-                if (duration > 0.0) break;
-            }
-    }
-    avformat_close_input(&ctx);
-    return duration;
+    return probeVideo(path).duration;
 #endif
 }
 
@@ -280,28 +301,7 @@ bool isEacVideo(const std::string& path) {
     (void)path;
     return false;
 #else
-    AVFormatContext* ctx = nullptr;
-    if (avformat_open_input(&ctx, path.c_str(), nullptr, nullptr) < 0) return false;
-    bool result = false;
-    if (avformat_find_stream_info(ctx, nullptr) >= 0) {
-        int videoCount = 0;
-        int width = 0, height = 0;
-        bool sameSize = true;
-        for (unsigned i = 0; i < ctx->nb_streams; ++i) {
-            AVCodecParameters* parameters = ctx->streams[i]->codecpar;
-            if (parameters->codec_type != AVMEDIA_TYPE_VIDEO) continue;
-            ++videoCount;
-            if (videoCount == 1) {
-                width = parameters->width;
-                height = parameters->height;
-            } else if (parameters->width != width || parameters->height != height) {
-                sameSize = false;
-            }
-        }
-        result = videoCount == 2 && sameSize && isEacFrameSize(width, height);
-    }
-    avformat_close_input(&ctx);
-    return result;
+    return probeVideo(path).eac;
 #endif
 }
 
@@ -315,57 +315,12 @@ bool decodeAtTimes(const std::string& path, const std::vector<double>& times,
     error = "built without libav: INSV input is disabled";
     return false;
 #else
-    AVFormatContext* ctx = nullptr;
-    if (avformat_open_input(&ctx, path.c_str(), nullptr, nullptr) < 0) {
-        error = "cannot open INSV container";
-        return false;
-    }
-    if (avformat_find_stream_info(ctx, nullptr) < 0) {
-        error = "cannot read INSV streams";
-        avformat_close_input(&ctx);
-        return false;
-    }
-    std::vector<int> streams;
-    for (unsigned i = 0; i < ctx->nb_streams; ++i)
-        if (ctx->streams[i]->codecpar->codec_type == AVMEDIA_TYPE_VIDEO)
-            streams.push_back(static_cast<int>(i));
-    if (streams.empty()) {
-        error = "no video track in container";
-        avformat_close_input(&ctx);
-        return false;
-    }
-    // One track means a side by side or stacked dual fisheye image. The loop
-    // below splits each decoded frame into two lens images in that case.
-    const bool eac = streams.size() >= 2 &&
-        isEacFrameSize(ctx->streams[streams[0]]->codecpar->width,
-                       ctx->streams[streams[0]]->codecpar->height);
-    const DecodeBackend backend = detectGpu().preferredDecodeBackend();
-    std::vector<DecoderState> decoders(streams.size());
-    for (size_t k = 0; k < streams.size(); ++k) {
-        const AVCodec* codec = avcodec_find_decoder(ctx->streams[streams[k]]->codecpar->codec_id);
-        if (!codec) { error = "missing decoder"; break; }
-        AVCodecParameters* parameters = ctx->streams[streams[k]]->codecpar;
-        if (!openBestDecoder(decoders[k], codec, parameters, backend)) {
-            error = "cannot initialise decoder";
-            break;
-        }
-    }
-    auto cleanup = [&]() {
-        for (auto& d : decoders) releaseDecoder(d);
-        avformat_close_input(&ctx);
-    };
-    if (!error.empty()) { cleanup(); return false; }
-
-    AVPacket* packet = av_packet_alloc();
-    AVFrame* frame = av_frame_alloc();
-    AVFrame* scratch = av_frame_alloc();
-
     bool sorted = true;
     for (size_t i = 1; i < times.size(); ++i)
         if (times[i] < times[i - 1]) { sorted = false; break; }
     // Seeking once per timestamp is several times slower than one linear
     // pass. Sorted requests can be served from the sequential decoder.
-    const bool useSequential = sorted && !eac;
+    const bool useSequential = sorted && !probeVideo(path).eac;
     if (useSequential) {
         size_t next = 0;
         std::string streamError;
@@ -393,7 +348,53 @@ bool decodeAtTimes(const std::string& path, const std::vector<double>& times,
             },
             streamError, 0);
         if (!streamError.empty() && out && out->empty()) error = streamError;
-    } else {
+    }
+
+    AVFormatContext* ctx = nullptr;
+    if (avformat_open_input(&ctx, path.c_str(), nullptr, nullptr) < 0) {
+        error = "cannot open INSV container";
+        return false;
+    }
+    if (avformat_find_stream_info(ctx, nullptr) < 0) {
+        error = "cannot read INSV streams";
+        avformat_close_input(&ctx);
+        return false;
+    }
+    std::vector<int> streams;
+    for (unsigned i = 0; i < ctx->nb_streams; ++i)
+        if (ctx->streams[i]->codecpar->codec_type == AVMEDIA_TYPE_VIDEO)
+            streams.push_back(static_cast<int>(i));
+    if (streams.empty()) {
+        error = "no video track in container";
+        avformat_close_input(&ctx);
+        return false;
+    }
+    // One track means a side by side or stacked dual fisheye image. The loop
+    // below splits each decoded frame into two lens images in that case.
+    const bool eac = streams.size() >= 2 &&
+        isEacFrameSize(ctx->streams[streams[0]]->codecpar->width,
+                       ctx->streams[streams[0]]->codecpar->height);
+    const DecodeBackend backend = cachedGpu().preferredDecodeBackend();
+    std::vector<DecoderState> decoders(streams.size());
+    for (size_t k = 0; k < streams.size(); ++k) {
+        const AVCodec* codec = avcodec_find_decoder(ctx->streams[streams[k]]->codecpar->codec_id);
+        if (!codec) { error = "missing decoder"; break; }
+        AVCodecParameters* parameters = ctx->streams[streams[k]]->codecpar;
+        if (!openBestDecoder(decoders[k], codec, parameters, backend)) {
+            error = "cannot initialise decoder";
+            break;
+        }
+    }
+    auto cleanup = [&]() {
+        for (auto& d : decoders) releaseDecoder(d);
+        avformat_close_input(&ctx);
+    };
+    if (!error.empty()) { cleanup(); return false; }
+
+    AVPacket* packet = av_packet_alloc();
+    AVFrame* frame = av_frame_alloc();
+    AVFrame* scratch = av_frame_alloc();
+
     for (size_t sample = 0; sample < times.size(); ++sample) {
         const double target = std::max(0.0, times[sample]);
         const int64_t seekTs = static_cast<int64_t>(std::max(0.0, target - 0.5) * AV_TIME_BASE);
@@ -412,7 +413,9 @@ bool decodeAtTimes(const std::string& path, const std::vector<double>& times,
             const size_t decoderIndex = std::min(track, decoders.size() - 1);
             DecoderState& decoder = decoders[decoderIndex];
             AVCodecParameters* params = ctx->streams[packet->stream_index]->codecpar;
-            const AVCodec* videoCodec = avcodec_find_decoder(params->codec_id);
+            const AVCodec* videoCodec = decoder.codecInfo
+                                            ? decoder.codecInfo
+                                            : avcodec_find_decoder(params->codec_id);
             int sent = avcodec_send_packet(decoder.codec, packet);
             if (sent < 0 && fallbackToSoftware(decoder, videoCodec, params))
                 sent = avcodec_send_packet(decoder.codec, packet);
@@ -495,7 +498,6 @@ bool decodeAtTimes(const std::string& path, const std::vector<double>& times,
         if (out)
             for (auto& f : picked) out->push_back(std::move(f));
     }
-    }
     av_frame_free(&frame);
     av_frame_free(&scratch);
     av_packet_free(&packet);
@@ -550,7 +552,7 @@ bool readInsv(const std::string& path, std::vector<LensFrame>& out,
     const bool eac = videoStreams.size() >= 2 &&
         isEacFrameSize(ctx->streams[videoStreams[0]]->codecpar->width,
                        ctx->streams[videoStreams[0]]->codecpar->height);
-    const DecodeBackend backend = detectGpu().preferredDecodeBackend();
+    const DecodeBackend backend = cachedGpu().preferredDecodeBackend();
     std::vector<DecoderState> decoders(videoStreams.size());
     for (size_t k = 0; k < videoStreams.size(); ++k) {
         AVStream* stream = ctx->streams[videoStreams[k]];
@@ -748,7 +750,7 @@ bool streamInsvSequential(const std::string& path, double fromSeconds,
         avformat_close_input(&ctx);
         return false;
     }
-    const DecodeBackend backend = detectGpu().preferredDecodeBackend();
+    const DecodeBackend backend = cachedGpu().preferredDecodeBackend();
     std::vector<DecoderState> decoders(streams.size());
     for (size_t k = 0; k < streams.size(); ++k) {
         const AVCodec* codec = avcodec_find_decoder(
@@ -865,7 +867,8 @@ bool streamInsvSequential(const std::string& path, double fromSeconds,
     av_packet_free(&packet);
     for (auto& d : decoders) releaseDecoder(d);
     avformat_close_input(&ctx);
-    return true;
+    if (!keepGoing) error.clear();
+    return keepGoing;
 #endif
 }
 

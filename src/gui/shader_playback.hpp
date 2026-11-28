@@ -72,7 +72,6 @@ private:
     QProcess* audio_ = nullptr;
     std::shared_ptr<Queue> queue_;
     std::thread worker_;
-    double fps_ = 25.0;
     double sourceDuration_ = 0.0;
     double fromSeconds_ = 0.0;
     double duration_ = 0.0;

@@ -50,8 +50,6 @@ bool ShaderPlayback::open(const QString& path, double fromSeconds,
                           double toSeconds, QString& error) {
     close();
     path_ = path;
-    fps_ = io::insvFrameRate(path.toStdString());
-    if (fps_ <= 0.0) fps_ = 25.0;
     sourceDuration_ = io::insvDuration(path.toStdString());
     if (sourceDuration_ <= 0.0) {
         error = "Cannot read the video duration";

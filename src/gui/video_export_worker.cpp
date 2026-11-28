@@ -104,8 +104,7 @@ void VideoExportWorker::run() {
         if (frame.empty()) return true;
         if (!writer.write(frame, error)) return false;
         ++written;
-        if ((written % 2) == 1 || written == static_cast<int>(total))
-            emit progress(written, static_cast<int>(total),
+        emit progress(written, static_cast<int>(total),
                           QString("Encoding frame %1 of %2").arg(written).arg(total));
         return true;
     };

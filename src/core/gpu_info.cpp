@@ -107,6 +107,11 @@ void markHardwareDecodeFailed(const std::string& signature) {
     out << signature << "\n";
 }
 
+const GpuInfo& cachedGpu() {
+    static const GpuInfo info = detectGpu();
+    return info;
+}
+
 DecodeBackend GpuInfo::preferredDecodeBackend() const {
     if (hardwareDecodeFailed(gpuDecodeSignature(*this))) return DecodeBackend::Cpu;
     if (hasNvidiaDevice || vendor == GpuVendor::Nvidia || opencvCudaDevices > 0)

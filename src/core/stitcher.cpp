@@ -222,7 +222,7 @@ Panorama stitchDualFisheye(const std::vector<LensFrame>& pair,
                                : reconstructPyramid(pyramid, options.linearOutput);
     if (!options.linearOutput && levels == 1 && out.equirect.depth() != CV_8U)
         out.equirect.convertTo(out.equirect, CV_8UC3);
-    out.seamMask = pyramid.front().weight.clone();
+    out.seamMask = std::move(pyramid.front().weight);
     const int covered = cv::countNonZero(out.seamMask);
     diagnostics += "dual fisheye, fov=" + std::to_string(options.fisheyeFovDegrees) +
                   ", coverage=" +

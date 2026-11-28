@@ -181,6 +181,10 @@ bool cmdBatch(int argc, char** argv) {
         return false;
     }
     const double everySeconds = numberOption(argc, argv, "--every", 10.0);
+    if (everySeconds <= 0.0) {
+        std::cerr << "--every must be greater than zero\n";
+        return 1;
+    }
     const int count = static_cast<int>(numberOption(argc, argv, "--count", 2));
     const double duration = ps::io::insvDuration(input);
     std::vector<double> times;

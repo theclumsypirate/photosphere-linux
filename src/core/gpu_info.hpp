@@ -25,6 +25,7 @@ struct GpuInfo {
 };
 
 GpuInfo detectGpu();
+const GpuInfo& cachedGpu();
 
 // Remembers a hardware decoder that failed on a real frame, so later runs do
 // not retry it and flood the log with driver errors.

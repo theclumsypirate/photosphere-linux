@@ -145,7 +145,7 @@ Panorama renderPanorama(const std::vector<PreparedFrame>& frames,
     } else {
         out.equirect = reconstructPyramid(pyramid);
     }
-    out.seamMask = pyramid.front().weight.clone();
+    out.seamMask = std::move(pyramid.front().weight);
     return out;
 }
 
