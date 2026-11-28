@@ -1,6 +1,7 @@
 #include "io/video_writer.hpp"
 
 #include "audio/ambisonics.hpp"
+#include "core/gpu_info.hpp"
 
 #ifdef PS_HAVE_FFMPEG
 
@@ -315,8 +316,15 @@ bool Mp4Writer::open(std::string& error) {
     const AVCodecID preferredId = impl_->hevc ? AV_CODEC_ID_HEVC : AV_CODEC_ID_H264;
     std::vector<const AVCodec*> candidates;
     if (g_preferHardwareEncoder) {
-        const char* names[] = {impl_->hevc ? "hevc_nvenc" : "h264_nvenc",
-                               impl_->hevc ? "hevc_qsv" : "h264_qsv"};
+        // Only try encoders the machine can actually have. On CPU-only systems
+        // probing NVENC/QSV only fills the log with driver errors.
+        const GpuInfo& gpu = cachedGpu();
+        std::vector<const char*> names;
+        if (gpu.hasNvidiaDevice || gpu.vendor == GpuVendor::Nvidia ||
+            gpu.opencvCudaDevices > 0)
+            names.push_back(impl_->hevc ? "hevc_nvenc" : "h264_nvenc");
+        if (gpu.hasQsvLibrary && gpu.hasDrmRenderNode)
+            names.push_back(impl_->hevc ? "hevc_qsv" : "h264_qsv");
         for (const char* name : names)
             if (const AVCodec* hardware = avcodec_find_encoder_by_name(name))
                 candidates.push_back(hardware);
