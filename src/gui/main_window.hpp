@@ -51,6 +51,7 @@ private slots:
     void saveTagged();
     void openFullscreen();
     void toggleFullscreen();
+    void openTouristFilter();
 
 protected:
     void dragEnterEvent(QDragEnterEvent* event) override;

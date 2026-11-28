@@ -11,6 +11,7 @@
 #include "gui/save_format_dialog.hpp"
 #include "gui/shader_preview_dialog.hpp"
 #include "gui/stitch_worker.hpp"
+#include "gui/tourist_filter_dialog.hpp"
 #include "gui/video_export_worker.hpp"
 #include "core/little_planet.hpp"
 #include "core/stitcher.hpp"
@@ -39,6 +40,7 @@
 #include <QKeySequence>
 #include <QLabel>
 #include <QListWidgetItem>
+#include <QMenuBar>
 #include <QMessageBox>
 #include <QMetaObject>
 #include <QPlainTextEdit>
@@ -157,6 +159,10 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent) {
     setMinimumSize(1500, 900);
     appSettings_ = loadAppSettings();
     io::setRawOptions({appSettings_.exposureEV, appSettings_.autoBright});
+
+    auto* optionsMenu = menuBar()->addMenu("Options");
+    optionsMenu->addAction("Remove tourists from photos...", this,
+                           &MainWindow::openTouristFilter);
 
     auto* central = new QWidget(this);
     auto* mainLayout = new QVBoxLayout(central);
@@ -892,6 +898,11 @@ void MainWindow::savePanorama() {
     });
     setStatus("Merging HDR bracket...");
     hdrThread_->start();
+}
+
+void MainWindow::openTouristFilter() {
+    TouristFilterDialog dialog(this);
+    dialog.exec();
 }
 
 void MainWindow::openShaderPreview() {
