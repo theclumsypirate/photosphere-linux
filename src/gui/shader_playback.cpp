@@ -4,6 +4,9 @@
 
 #include <opencv2/imgproc.hpp>
 
+#include <QProcess>
+#include <QStandardPaths>
+#include <QStringList>
 #include <QTimer>
 
 #include <algorithm>
@@ -121,9 +124,49 @@ void ShaderPlayback::stopDecoder() {
     queue_.reset();
 }
 
+void ShaderPlayback::startAudio() {
+    stopAudio();
+    const QString ffmpeg = QStandardPaths::findExecutable("ffmpeg");
+    if (ffmpeg.isEmpty() || path_.isEmpty()) return;
+    const double remaining = duration_ - position_;
+    if (remaining <= 0.05) return;
+
+    // atempo only accepts 0.5 to 2.0, so chain it for larger speeds.
+    QStringList tempo;
+    double factor = speed_;
+    while (factor > 2.0) { tempo << "atempo=2.0"; factor /= 2.0; }
+    while (factor < 0.5) { tempo << "atempo=0.5"; factor /= 0.5; }
+    tempo << QString("atempo=%1").arg(factor, 0, 'f', 2);
+
+    audio_ = new QProcess(this);
+    QStringList args;
+    args << "-hide_banner" << "-loglevel" << "error" << "-nostdin"
+         << "-ss" << QString::number(fromSeconds_ + position_, 'f', 3)
+         << "-t" << QString::number(remaining, 'f', 3)
+         << "-i" << path_ << "-vn" << "-af" << tempo.join(",")
+         << "-f" << "alsa" << "default";
+    audio_->start(ffmpeg, args);
+}
+
+void ShaderPlayback::stopAudio() {
+    if (!audio_) return;
+    if (audio_->state() != QProcess::NotRunning) {
+        audio_->terminate();
+        if (!audio_->waitForFinished(500)) audio_->kill();
+    }
+    delete audio_;
+    audio_ = nullptr;
+}
+
+void ShaderPlayback::setSpeed(double speed) {
+    speed_ = std::max(0.25, std::min(16.0, speed));
+    if (playing_) startAudio();
+}
+
 void ShaderPlayback::close() {
     playing_ = false;
     timer_->stop();
+    stopAudio();
     stopDecoder();
     path_.clear();
     duration_ = 0.0;
@@ -136,9 +179,13 @@ void ShaderPlayback::play() {
     if (path_.isEmpty() || !queue_) return;
     playing_ = true;
     timer_->start();
+    startAudio();
 }
 
-void ShaderPlayback::pause() { playing_ = false; }
+void ShaderPlayback::pause() {
+    playing_ = false;
+    stopAudio();
+}
 
 void ShaderPlayback::seek(double seconds) {
     if (path_.isEmpty() || !queue_) return;
@@ -157,6 +204,7 @@ void ShaderPlayback::seek(double seconds) {
         queue_->frames.clear();
         queue_->pendingSeek = fromSeconds_ + position_;
     }
+    if (playing_) startAudio();
     emit positionChanged(position_);
 }
 

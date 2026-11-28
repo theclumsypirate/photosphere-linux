@@ -14,6 +14,7 @@
 #include <utility>
 #include <vector>
 
+class QProcess;
 class QTimer;
 
 namespace ps::gui {
@@ -34,7 +35,7 @@ public:
     void pause();
     void seek(double seconds);
     void close();
-    void setSpeed(double speed) { speed_ = std::max(0.25, std::min(16.0, speed)); }
+    void setSpeed(double speed);
 
     bool playing() const { return playing_; }
     double speed() const { return speed_; }
@@ -52,6 +53,8 @@ private slots:
 private:
     void startDecoder(double fromSeconds);
     void stopDecoder();
+    void startAudio();
+    void stopAudio();
 
     struct Queue {
         std::mutex mutex;
@@ -66,6 +69,7 @@ private:
 
     QString path_;
     QTimer* timer_ = nullptr;
+    QProcess* audio_ = nullptr;
     std::shared_ptr<Queue> queue_;
     std::thread worker_;
     double fps_ = 25.0;
