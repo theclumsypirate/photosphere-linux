@@ -51,6 +51,7 @@ private slots:
     void saveTagged();
     void openFullscreen();
     void toggleFullscreen();
+    void toggleStabilize();
 
 protected:
     void dragEnterEvent(QDragEnterEvent* event) override;
@@ -78,6 +79,8 @@ private:
     QPushButton* exportButton_ = nullptr;
     ViewerWidget* viewer_ = nullptr;
     cv::Mat panorama_;
+    cv::Mat originalPanorama_;
+    bool stabilized_ = false;
     QThread* stitchThread_ = nullptr;
     QThread* hdrThread_ = nullptr;
     QProgressDialog* stitchProgress_ = nullptr;

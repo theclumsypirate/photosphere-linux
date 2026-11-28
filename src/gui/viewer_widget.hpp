@@ -27,6 +27,11 @@ public:
     ~ViewerWidget() override;
 
     void setPanorama(const cv::Mat& bgr);
+    void setView(double yawDegrees, double pitchDegrees, double fovDegrees);
+    void setOverlayButtonsVisible(bool visible);
+    double yaw() const { return yaw_; }
+    double pitch() const { return pitch_; }
+    double fov() const { return fov_; }
 
     // Captures exactly what is currently on screen, including the rotation.
     QPixmap currentView();
@@ -34,6 +39,7 @@ public:
 signals:
     void snapshotRequested();
     void panoramaSaveRequested();
+    void stabilizeRequested();
 
 public slots:
     void resetView();
@@ -69,6 +75,7 @@ private:
     QPushButton* snapshotButton_ = nullptr;
     QPushButton* savePanoButton_ = nullptr;
     QSlider* fovSlider_ = nullptr;
+    QPushButton* stabilizeButton_ = nullptr;
 };
 
 } // namespace ps::gui

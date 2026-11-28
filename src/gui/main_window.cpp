@@ -13,12 +13,14 @@
 #include "gui/stitch_worker.hpp"
 #include "gui/video_export_worker.hpp"
 #include "core/little_planet.hpp"
+#include "core/stabilize.hpp"
 #include "core/stitcher.hpp"
 #include "io/exif_pose.hpp"
 #include "io/ffmpeg_log.hpp"
 #include "io/frame_store.hpp"
 #include "io/image_io.hpp"
 #include "io/insv_reader.hpp"
+#include "io/insv_telemetry.hpp"
 #include "io/video_writer.hpp"
 
 #include <opencv2/imgcodecs.hpp>
@@ -331,6 +333,8 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent) {
     connect(exportButton_, &QPushButton::clicked, this, &MainWindow::renderVideo);
     connect(viewer_, &ViewerWidget::snapshotRequested, this, &MainWindow::saveSnapshot);
     connect(viewer_, &ViewerWidget::panoramaSaveRequested, this, &MainWindow::savePanorama);
+    connect(viewer_, &ViewerWidget::stabilizeRequested, this,
+            &MainWindow::toggleStabilize);
     connect(multiCamButton, &QPushButton::clicked, this, &MainWindow::openMultiCamera);
     connect(autoButton, &QPushButton::clicked, this, &MainWindow::autoStitchAll);
     connect(fullscreenButton, &QPushButton::clicked, this, &MainWindow::openFullscreen);
@@ -925,19 +929,51 @@ void MainWindow::openShaderPreview() {
     dialog->show();
 }
 
-void MainWindow::openMultiCamera() {
+void MainWindow::toggleStabilize() {
+    if (panorama_.empty()) {
+        QMessageBox::information(this, "Stabilize", "Stitch a panorama first.");
+        return;
+    }
+    if (stabilized_) {
+        panorama_ = originalPanorama_;
+        stabilized_ = false;
+        viewer_->setPanorama(panorama_);
+        setStatus("Stabilization disabled");
+        return;
+    }
     std::string videoPath;
     for (const auto& path : inputPaths())
         if (io::isVideoFile(path)) { videoPath = path; break; }
-    if (!videoPath.empty()) {
-        auto* dialog = new MultiCameraDialog(QString::fromStdString(videoPath),
-                                             this);
-        dialog->setAttribute(Qt::WA_DeleteOnClose, true);
-        dialog->show();
+    if (videoPath.empty()) {
+        QMessageBox::information(this, "Stabilize",
+                                 "Add the source .insv video first.");
         return;
     }
+    io::InsvTelemetry telemetry;
+    std::string error;
+    if (!io::readInsvTelemetry(videoPath, telemetry, error)) {
+        QMessageBox::warning(this, "Stabilize",
+                             QString::fromStdString(error));
+        return;
+    }
+    StabilizeOptions options;
+    options.mode = StabilizeMode::HorizonLock;
+    Stabilizer stabilizer;
+    if (!stabilizer.load(telemetry, options, error)) {
+        QMessageBox::warning(this, "Stabilize",
+                             QString::fromStdString(error));
+        return;
+    }
+    originalPanorama_ = panorama_.clone();
+    panorama_ = rotateEquirect(panorama_, stabilizer.rotationAt(0.0));
+    stabilized_ = true;
+    viewer_->setPanorama(panorama_);
+    setStatus("Horizon leveled using IMU");
+}
+
+void MainWindow::openMultiCamera() {
     if (panorama_.empty()) {
-        QMessageBox::warning(this, "Nothing to show", "Stitch first or add a video.");
+        QMessageBox::warning(this, "Nothing to show", "Stitch a photo first.");
         return;
     }
     auto* dialog = new MultiCameraDialog(panorama_, this);

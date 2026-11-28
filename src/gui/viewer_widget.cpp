@@ -88,6 +88,21 @@ ViewerWidget::ViewerWidget(QWidget* parent) : QOpenGLWidget(parent) {
         resizeGL(width(), height());
         update();
     });
+
+    stabilizeButton_ = new QPushButton("Stabilize", this);
+    stabilizeButton_->setIcon(QIcon(":/icons/icon.png"));
+    stabilizeButton_->setIconSize(QSize(20, 20));
+    stabilizeButton_->setToolTip("Level the panorama using IMU telemetry");
+    stabilizeButton_->setFixedSize(110, 40);
+    stabilizeButton_->setStyleSheet(
+        "QPushButton { background: rgba(30,32,42,220); color: white; "
+        "border: 1px solid #555; border-radius: 6px; } "
+        "QPushButton:hover { background: rgba(70,74,92,240); }");
+    stabilizeButton_->move(200, height() - 52);
+    stabilizeButton_->raise();
+    stabilizeButton_->show();
+    connect(stabilizeButton_, &QPushButton::clicked,
+            this, &ViewerWidget::stabilizeRequested);
 }
 
 ViewerWidget::~ViewerWidget() {
@@ -193,6 +208,23 @@ void ViewerWidget::setPanorama(const cv::Mat& bgr) {
     update();
 }
 
+void ViewerWidget::setView(double yawDegrees, double pitchDegrees,
+                          double fovDegrees) {
+    yaw_ = static_cast<float>(yawDegrees);
+    pitch_ = static_cast<float>(std::clamp(pitchDegrees, -89.0, 89.0));
+    fov_ = static_cast<float>(std::clamp(fovDegrees, 15.0, 120.0));
+    if (fovSlider_) fovSlider_->setValue(static_cast<int>(fov_));
+    resizeGL(width(), height());
+    updateViewMatrix();
+    update();
+}
+
+void ViewerWidget::setOverlayButtonsVisible(bool visible) {
+    snapshotButton_->setVisible(visible);
+    savePanoButton_->setVisible(visible);
+    fovSlider_->setVisible(visible);
+}
+
 void ViewerWidget::resetView() {
     yaw_ = 0.0f;
     pitch_ = 0.0f;
@@ -236,6 +268,8 @@ void ViewerWidget::resizeEvent(QResizeEvent* event) {
         savePanoButton_->move(width() - 292, height() - 52);
     if (fovSlider_)
         fovSlider_->move(12, height() - 52);
+    if (stabilizeButton_)
+        stabilizeButton_->move(200, height() - 52);
 }
 
 QPixmap ViewerWidget::currentView() {

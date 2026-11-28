@@ -1,295 +1,183 @@
 #include "gui/multi_camera_dialog.hpp"
 
-#include "core/little_planet.hpp"
-#include "core/multi_view.hpp"
-#include "core/stitcher.hpp"
-#include "io/frame_store.hpp"
-#include "io/insv_reader.hpp"
+#include "gui/viewer_widget.hpp"
 
 #include <opencv2/imgcodecs.hpp>
-#include <opencv2/imgproc.hpp>
 
 #include <QCheckBox>
-#include <QFileDialog>
 #include <QCloseEvent>
-#include <QDir>
-#include <QFormLayout>
+#include <QFileDialog>
 #include <QHBoxLayout>
 #include <QLabel>
 #include <QMessageBox>
-#include <QMouseEvent>
-#include <QPixmap>
+#include <QPainter>
 #include <QPushButton>
-#include <QRadioButton>
+#include <QResizeEvent>
 #include <QSettings>
-#include <QStandardPaths>
-#include <QWheelEvent>
-#include <QSlider>
-#include <QTimer>
 #include <QVBoxLayout>
 
 #include <algorithm>
-#include <cmath>
-#include <string>
 
 namespace ps::gui {
 
 MultiCameraDialog::MultiCameraDialog(const cv::Mat& panorama, QWidget* parent)
     : QDialog(parent) {
     panorama_[0] = panorama;
-    camera_[1].yaw = 180.0;
     build();
+    restoreState();
 }
 
-MultiCameraDialog::MultiCameraDialog(const cv::Mat& first, const cv::Mat& second,
-                                     QWidget* parent)
+MultiCameraDialog::MultiCameraDialog(const cv::Mat& first,
+                                     const cv::Mat& second, QWidget* parent)
     : QDialog(parent) {
     panorama_[0] = first;
     panorama_[1] = second;
-    camera_[1].yaw = 180.0;
-    build();
-}
-
-MultiCameraDialog::MultiCameraDialog(const QString& videoPath, QWidget* parent)
-    : QDialog(parent), videoPath_(videoPath) {
-    videoDuration_ = io::insvDuration(videoPath.toStdString());
     build();
     restoreState();
-    if (videoDuration_ > 0.0 && panorama_[0].empty()) {
-        time_->setEnabled(true);
-        capture(0);
-        capture(1);
+}
+
+MultiCameraDialog::~MultiCameraDialog() = default;
+
+void MultiCameraDialog::build() {
+    setWindowTitle("Multi-camera view");
+    resize(1100, 720);
+    setMinimumSize(700, 500);
+
+    stage_ = new QWidget(this);
+    stage_->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Expanding);
+    for (int i = 0; i < 2; ++i) {
+        view_[i] = new ViewerWidget(stage_);
+        view_[i]->setOverlayButtonsVisible(false);
+        view_[i]->setPanorama(!panorama_[i].empty() ? panorama_[i]
+                                                    : panorama_[0]);
+        view_[i]->setView(i == 1 ? 180.0 : 0.0, 0.0, 75.0);
     }
-    if (!panorama_[0].empty()) preview();
+    view_[1]->raise();
+
+    auto* loadFirst = new QPushButton("Load picture 1", this);
+    auto* loadSecond = new QPushButton("Load picture 2", this);
+    connect(loadFirst, &QPushButton::clicked, this, [this]() { loadPicture(0); });
+    connect(loadSecond, &QPushButton::clicked, this, [this]() { loadPicture(1); });
+    pip_ = new QCheckBox("Picture in picture", this);
+    pip_->setChecked(true);
+    connect(pip_, &QCheckBox::toggled, this, [this]() { applyLayout(); });
+    auto* saveButton = new QPushButton("Save image", this);
+    connect(saveButton, &QPushButton::clicked, this, &MultiCameraDialog::save);
+
+    auto* side = new QVBoxLayout();
+    side->addWidget(new QLabel("Pictures", this));
+    side->addWidget(loadFirst);
+    side->addWidget(loadSecond);
+    side->addWidget(pip_);
+    side->addWidget(saveButton);
+    side->addStretch(1);
+
+    auto* main = new QHBoxLayout(this);
+    main->addWidget(stage_, 1);
+    main->addLayout(side);
+    applyLayout();
+}
+
+void MultiCameraDialog::applyLayout() {
+    const int w = std::max(1, stage_->width());
+    const int h = std::max(1, stage_->height());
+    if (pip_->isChecked()) {
+        view_[0]->setGeometry(0, 0, w, h);
+        const int iw = std::max(160, w / 3);
+        const int ih = std::max(90, h / 3);
+        view_[1]->setGeometry(w - iw - 8, h - ih - 8, iw, ih);
+        view_[1]->raise();
+    } else {
+        view_[0]->setGeometry(0, 0, w / 2, h);
+        view_[1]->setGeometry(w / 2, 0, w - w / 2, h);
+    }
+}
+
+void MultiCameraDialog::resizeEvent(QResizeEvent* event) {
+    QDialog::resizeEvent(event);
+    applyLayout();
+}
+
+void MultiCameraDialog::loadPicture(int index) {
+    const QString path = QFileDialog::getOpenFileName(
+        this, "Choose panorama " + QString::number(index + 1), QString(),
+        "Images (*.png *.jpg *.jpeg *.bmp *.tif *.tiff);;All files (*)");
+    if (path.isEmpty()) return;
+    const cv::Mat image = cv::imread(path.toStdString(), cv::IMREAD_COLOR);
+    if (image.empty()) {
+        QMessageBox::warning(this, "Load failed", "Cannot read " + path);
+        return;
+    }
+    panorama_[index] = image;
+    view_[index]->setPanorama(image);
+}
+
+void MultiCameraDialog::save() {
+    QImage main = view_[0]->currentView().toImage();
+    QImage inset = view_[1]->currentView().toImage();
+    if (main.isNull()) return;
+    QImage out;
+    QPainter painter;
+    if (pip_->isChecked()) {
+        out = main.copy();
+        painter.begin(&out);
+        if (!inset.isNull()) {
+            const int iw = std::min(out.width() / 3, 420);
+            const int ih = iw * inset.height() / std::max(1, inset.width());
+            const QRect rect(out.width() - iw - 8, out.height() - ih - 8,
+                             iw, ih);
+            painter.drawImage(rect, inset.scaled(rect.size(),
+                                                 Qt::KeepAspectRatioByExpanding));
+            painter.drawRect(rect.adjusted(0, 0, -1, -1));
+        }
+    } else if (!inset.isNull()) {
+        out = QImage(main.width() + inset.width(),
+                     std::max(main.height(), inset.height()),
+                     QImage::Format_RGB32);
+        out.fill(Qt::black);
+        painter.begin(&out);
+        painter.drawImage(0, 0, main);
+        painter.drawImage(main.width(), 0, inset);
+    } else {
+        out = main.copy();
+        painter.begin(&out);
+    }
+    painter.end();
+    const QString path = QFileDialog::getSaveFileName(
+        this, "Save multi-camera image", QString(), "PNG (*.png);;JPEG (*.jpg)");
+    if (path.isEmpty()) return;
+    if (!out.save(path))
+        QMessageBox::warning(this, "Save failed", "Could not write " + path);
 }
 
 void MultiCameraDialog::saveState() {
     QSettings settings("Photosphere", "multiCamera");
-    const QString dir = QStandardPaths::writableLocation(
-        QStandardPaths::AppLocalDataLocation);
-    QDir().mkpath(dir);
     for (int i = 0; i < 2; ++i) {
-        settings.setValue(QString("cam%1/yaw").arg(i), camera_[i].yaw);
-        settings.setValue(QString("cam%1/pitch").arg(i), camera_[i].pitch);
-        settings.setValue(QString("cam%1/fov").arg(i), camera_[i].fov);
-        const QString key = QString("pano%1").arg(i);
-        if (!panorama_[i].empty()) {
-            const QString path = dir + QString("/multi_pano%1.png").arg(i);
-            if (cv::imwrite(path.toStdString(), panorama_[i]))
-                settings.setValue(key, path);
-        } else {
-            settings.remove(key);
-        }
+        settings.setValue(QString("cam%1/yaw").arg(i), view_[i]->yaw());
+        settings.setValue(QString("cam%1/pitch").arg(i), view_[i]->pitch());
+        settings.setValue(QString("cam%1/fov").arg(i), view_[i]->fov());
     }
-    settings.setValue("selected", selected_);
     settings.setValue("pip", pip_->isChecked());
 }
 
 void MultiCameraDialog::restoreState() {
     QSettings settings("Photosphere", "multiCamera");
     for (int i = 0; i < 2; ++i) {
-        camera_[i].yaw = settings.value(QString("cam%1/yaw").arg(i),
-                                        camera_[i].yaw).toDouble();
-        camera_[i].pitch = settings.value(QString("cam%1/pitch").arg(i),
-                                          camera_[i].pitch).toDouble();
-        camera_[i].fov = settings.value(QString("cam%1/fov").arg(i),
-                                        camera_[i].fov).toDouble();
-        const QString path = settings.value(QString("pano%1").arg(i)).toString();
-        if (!path.isEmpty()) panorama_[i] = cv::imread(path.toStdString());
+        const double yaw = settings.value(QString("cam%1/yaw").arg(i),
+                                          i == 1 ? 180.0 : 0.0).toDouble();
+        const double pitch = settings.value(QString("cam%1/pitch").arg(i),
+                                            0.0).toDouble();
+        const double fov = settings.value(QString("cam%1/fov").arg(i),
+                                          75.0).toDouble();
+        view_[i]->setView(yaw, pitch, fov);
     }
-    selected_ = settings.value("selected", 0).toInt();
-    if (selected_ == 1) editSecond_->setChecked(true);
-    fov_->setValue(static_cast<int>(camera_[selected_].fov));
     pip_->setChecked(settings.value("pip", true).toBool());
+    applyLayout();
 }
 
 void MultiCameraDialog::closeEvent(QCloseEvent* event) {
     saveState();
     QDialog::closeEvent(event);
-}
-
-void MultiCameraDialog::schedulePreview() {
-    if (!previewTimer_) {
-        previewTimer_ = new QTimer(this);
-        previewTimer_->setSingleShot(true);
-        connect(previewTimer_, &QTimer::timeout, this,
-                &MultiCameraDialog::preview);
-    }
-    previewTimer_->start(16);
-}
-
-void MultiCameraDialog::build() {
-    setWindowTitle("Multi-camera view");
-    resize(1100, 720);
-
-    previewLabel_ = new QLabel(this);
-    previewLabel_->setMinimumSize(480, 270);
-    previewLabel_->setAlignment(Qt::AlignCenter);
-    statusLabel_ = new QLabel("Drag on the image to aim the selected camera.",
-                              this);
-
-    editFirst_ = new QRadioButton("Edit panorama 1", this);
-    editSecond_ = new QRadioButton("Edit panorama 2", this);
-    editFirst_->setChecked(true);
-    connect(editFirst_, &QRadioButton::toggled, this, [this](bool on) {
-        if (on) { selected_ = 0; fov_->setValue(static_cast<int>(camera_[0].fov)); }
-    });
-    connect(editSecond_, &QRadioButton::toggled, this, [this](bool on) {
-        if (on) { selected_ = 1; fov_->setValue(static_cast<int>(camera_[1].fov)); }
-    });
-
-    fov_ = new QSlider(Qt::Horizontal, this);
-    fov_->setRange(15, 120);
-    fov_->setValue(static_cast<int>(camera_[0].fov));
-    connect(fov_, &QSlider::valueChanged, this, [this](int value) {
-        camera_[selected_].fov = value;
-        schedulePreview();
-    });
-
-    pip_ = new QCheckBox("Picture in picture", this);
-    pip_->setChecked(true);
-    connect(pip_, &QCheckBox::toggled, this, [this]() { preview(); });
-
-    auto* side = new QVBoxLayout();
-    side->addWidget(new QLabel("Edit", this));
-    side->addWidget(editFirst_);
-    side->addWidget(editSecond_);
-    side->addWidget(new QLabel("Field of view", this));
-    side->addWidget(fov_);
-    side->addWidget(pip_);
-
-    if (!videoPath_.isEmpty()) {
-        time_ = new QSlider(Qt::Horizontal, this);
-        time_->setRange(0, 1000);
-        time_->setEnabled(false);
-        connect(time_, &QSlider::valueChanged, this,
-                &MultiCameraDialog::onTimeChanged);
-        auto* captureFirst = new QPushButton("Capture panorama 1 here", this);
-        auto* captureSecond = new QPushButton("Capture panorama 2 here", this);
-        connect(captureFirst, &QPushButton::clicked, this, [this]() { capture(0); });
-        connect(captureSecond, &QPushButton::clicked, this, [this]() { capture(1); });
-        side->addWidget(new QLabel("Video time", this));
-        side->addWidget(time_);
-        side->addWidget(captureFirst);
-        side->addWidget(captureSecond);
-    }
-
-    auto* saveButton = new QPushButton("Save image", this);
-    connect(saveButton, &QPushButton::clicked, this, &MultiCameraDialog::save);
-    side->addWidget(saveButton);
-    side->addStretch(1);
-
-    auto* layout = new QHBoxLayout(this);
-    layout->addWidget(previewLabel_, 1);
-    layout->addLayout(side);
-    auto* bottom = new QVBoxLayout();
-    bottom->addLayout(layout);
-    bottom->addWidget(statusLabel_);
-    setLayout(bottom);
-
-    preview();
-}
-
-cv::Mat MultiCameraDialog::currentPanorama() const {
-    return !panorama_[selected_].empty() ? panorama_[selected_]
-                                         : panorama_[0];
-}
-
-void MultiCameraDialog::preview() {
-    const cv::Mat& main = !panorama_[0].empty() ? panorama_[0] : panorama_[1];
-    const cv::Mat& secondary = !panorama_[1].empty() ? panorama_[1] : panorama_[0];
-    if (main.empty()) return;
-    const cv::Mat image = pip_->isChecked()
-                              ? renderPipView(main, camera_[0], secondary,
-                                              camera_[1], 1024, 512)
-                              : renderSplitView(main, camera_[0], secondary,
-                                                camera_[1], 800, 400);
-    if (image.empty()) return;
-    previewImage_ = QImage(image.data, image.cols, image.rows,
-                           static_cast<qsizetype>(image.step),
-                           QImage::Format_BGR888).copy();
-    previewLabel_->setPixmap(QPixmap::fromImage(previewImage_));
-    statusLabel_->setText(QString("Editing panorama %1 - drag to aim, wheel to zoom")
-                              .arg(selected_ + 1));
-}
-
-void MultiCameraDialog::capture(int index) {
-    if (videoPath_.isEmpty()) return;
-    const double at = time_ ? time_->value() / 1000.0 * videoDuration_ : 0.0;
-    std::vector<LensFrame> frames;
-    std::string error;
-    if (!io::readInsvAtTimes(videoPath_.toStdString(), {at}, frames, error)) {
-        statusLabel_->setText(QString::fromStdString(error));
-        return;
-    }
-    ps::StitchOptions options;
-    options.width = 4096;
-    options.multiband = false;
-    options.useLocalWarp = false;
-    options.useSeams = false;
-    // Build a small input session from this one frame pair.
-    ps::io::InputSession session;
-    session.frames = frames;
-    const ps::Panorama result = ps::stitchSession(session, options, error);
-    if (result.equirect.empty()) {
-        statusLabel_->setText(QString::fromStdString(error));
-        return;
-    }
-    panorama_[index] = result.equirect.clone();
-    statusLabel_->setText(QString("Captured panorama %1 at %2 s")
-                              .arg(index + 1).arg(at, 0, 'f', 1));
-    preview();
-}
-
-void MultiCameraDialog::onTimeChanged(int value) {
-    if (!time_ || videoDuration_ <= 0.0) return;
-    statusLabel_->setText(QString("Time %1 s - press Capture to take a panorama")
-                              .arg(value / 1000.0 * videoDuration_, 0, 'f', 1));
-}
-
-void MultiCameraDialog::save() {
-    const QString path = QFileDialog::getSaveFileName(
-        this, "Save multi-camera image", QString(), "PNG (*.png);;JPEG (*.jpg)");
-    if (path.isEmpty()) return;
-    const cv::Mat& main = !panorama_[0].empty() ? panorama_[0] : panorama_[1];
-    const cv::Mat& secondary = !panorama_[1].empty() ? panorama_[1] : panorama_[0];
-    const cv::Mat image = pip_->isChecked()
-                              ? renderPipView(main, camera_[0], secondary,
-                                              camera_[1], 2048, 1024)
-                              : renderSplitView(main, camera_[0], secondary,
-                                                camera_[1], 2048, 1024);
-    if (!image.empty() && cv::imwrite(path.toStdString(), image))
-        QMessageBox::information(this, "Saved", path);
-    else
-        QMessageBox::warning(this, "Save failed", "Could not write the image.");
-}
-
-void MultiCameraDialog::mousePressEvent(QMouseEvent* event) {
-    lastPos_ = event->pos();
-    QDialog::mousePressEvent(event);
-}
-
-void MultiCameraDialog::mouseMoveEvent(QMouseEvent* event) {
-    if (event->buttons() & Qt::LeftButton && previewLabel_->geometry().contains(event->pos())) {
-        const QPoint delta = event->pos() - lastPos_;
-        // Same speed and direction as the main panorama viewer. The core
-        // CameraPose is inverted in pitch, hence the minus sign.
-        camera_[selected_].yaw -= delta.x() * 0.3;
-        camera_[selected_].pitch = std::clamp(camera_[selected_].pitch -
-                                              delta.y() * 0.3, -89.0, 89.0);
-        lastPos_ = event->pos();
-        schedulePreview();
-    }
-    QDialog::mouseMoveEvent(event);
-}
-
-void MultiCameraDialog::wheelEvent(QWheelEvent* event) {
-    const int steps = event->angleDelta().y() / 120;
-    double fov = std::clamp(camera_[selected_].fov + steps * 5.0,
-                            15.0, 120.0);
-    camera_[selected_].fov = fov;
-    fov_->setValue(static_cast<int>(fov));
-    schedulePreview();
 }
 
 } // namespace ps::gui
