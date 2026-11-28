@@ -365,12 +365,14 @@ bool decodeAtTimes(const std::string& path, const std::vector<double>& times,
         if (times[i] < times[i - 1]) { sorted = false; break; }
     // Seeking once per timestamp is several times slower than one linear
     // pass. Sorted requests can be served from the sequential decoder.
-    const bool useSequential = sorted && !isEacVideo(path);
+    const bool useSequential = sorted && !eac;
     if (useSequential) {
         size_t next = 0;
         std::string streamError;
+        const double firstTarget = times.empty() ? 0.0
+                                                 : std::max(0.0, times.front() - 0.5);
         streamInsvSequential(
-            path, 0.0,
+            path, firstTarget,
             [&](const std::vector<LensFrame>& frames) {
                 if (frames.empty()) return true;
                 const double ts = frames.front().timestamp;

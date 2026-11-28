@@ -78,6 +78,7 @@ void VideoExportWorker::run() {
         emit finished(false, QString::fromStdString(error));
         return;
     }
+    emit progress(0, static_cast<int>(times.size()), "Decoding video frames...");
 
     int written = 0;
     const size_t total = times.size();
