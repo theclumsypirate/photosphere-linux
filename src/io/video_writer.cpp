@@ -141,18 +141,20 @@ bool Mp4Writer::Impl::encodeRotatedAudio(std::string& error) {
 #if LIBAVUTIL_VERSION_MAJOR >= 57
                 AVChannelLayout outLayout{AV_CHANNEL_ORDER_UNSPEC, 4, 0, nullptr};
                 AVChannelLayout inLayout{AV_CHANNEL_ORDER_UNSPEC, 4, 0, nullptr};
-                const int setup = swr_alloc_set_opts2(
-                    &swr, &outLayout, AV_SAMPLE_FMT_FLTP, enc->sample_rate,
-                    &inLayout, static_cast<AVSampleFormat>(source->format),
-                    source->sample_rate, 0, nullptr);
+                if (swr_alloc_set_opts2(
+                        &swr, &outLayout, AV_SAMPLE_FMT_FLTP, enc->sample_rate,
+                        &inLayout, static_cast<AVSampleFormat>(source->format),
+                        source->sample_rate, 0, nullptr) < 0 ||
+                    swr_init(swr) < 0)
+                    return;
 #else
-                const int setup = swr_alloc_set_opts(
+                swr = swr_alloc_set_opts(
                     swr, AV_CH_LAYOUT_QUAD, AV_SAMPLE_FMT_FLTP, enc->sample_rate,
                     av_get_default_channel_layout(4),
                     static_cast<AVSampleFormat>(source->format),
                     source->sample_rate, 0, nullptr);
+                if (!swr || swr_init(swr) < 0) return;
 #endif
-                if (setup < 0 || swr_init(swr) < 0) return;
             }
             if (av_samples_alloc_array_and_samples(&converted, nullptr, 4,
                                                    source->nb_samples,
