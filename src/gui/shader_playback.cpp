@@ -64,24 +64,34 @@ bool ShaderPlayback::open(const QString& path, QString& error) {
 void ShaderPlayback::startDecoder(double fromSeconds) {
     stopDecoder();
     auto shared = std::make_shared<Queue>();
+    shared->offset = std::clamp(fromSeconds, 0.0, duration_);
     queue_ = shared;
     const QString path = path_;
-    double start = std::clamp(fromSeconds, 0.0, duration_);
-    worker_ = std::thread([shared, path, start, this]() {
+    double start = shared->offset;
+    auto seekRequest = [shared]() -> double {
+        std::lock_guard<std::mutex> lock(shared->mutex);
+        if (shared->pendingSeek < 0.0) return -1.0;
+        const double target = shared->pendingSeek;
+        shared->pendingSeek = -1.0;
+        shared->offset = target;
+        return target;
+    };
+    worker_ = std::thread([shared, path, start, seekRequest]() {
         std::string error;
         const bool ok = io::streamInsvSequential(
             path.toStdString(), start,
-            [shared, start, this](const std::vector<LensFrame>& frames) {
+            [shared](const std::vector<LensFrame>& frames) {
                 cv::Mat image = makeSideBySide(frames);
                 if (image.empty()) return true;
                 std::lock_guard<std::mutex> lock(shared->mutex);
                 if (shared->stop) return false;
                 // Keep the freshest frames only, so playback never lags.
                 if (shared->frames.size() >= 4) shared->frames.pop_front();
-                shared->frames.emplace_back(frames[0].timestamp - start, image);
+                shared->frames.emplace_back(frames[0].timestamp - shared->offset,
+                                            image);
                 return true;
             },
-            error, 512);
+            error, 512, seekRequest);
         {
             std::lock_guard<std::mutex> lock(shared->mutex);
             shared->finished = true;
@@ -90,7 +100,6 @@ void ShaderPlayback::startDecoder(double fromSeconds) {
             std::lock_guard<std::mutex> lock(shared->mutex);
             shared->error = QString::fromStdString(error);
         }
-        (void)this;
     });
 }
 
@@ -122,10 +131,22 @@ void ShaderPlayback::play() {
 void ShaderPlayback::pause() { playing_ = false; }
 
 void ShaderPlayback::seek(double seconds) {
-    if (path_.isEmpty()) return;
+    if (path_.isEmpty() || !queue_) return;
     position_ = std::clamp(seconds, 0.0, duration_);
     lastDisplayedTime_ = -1.0;
-    startDecoder(position_);
+    bool finished = false;
+    {
+        std::lock_guard<std::mutex> lock(queue_->mutex);
+        finished = queue_->finished;
+    }
+    if (finished) {
+        // Nothing is reading packets any more, so a new decoder is required.
+        startDecoder(position_);
+    } else {
+        std::lock_guard<std::mutex> lock(queue_->mutex);
+        queue_->frames.clear();
+        queue_->pendingSeek = position_;
+    }
     emit positionChanged(position_);
 }
 

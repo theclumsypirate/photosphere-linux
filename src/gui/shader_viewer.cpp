@@ -96,15 +96,22 @@ void ShaderViewer::initializeGL() {
 
 void ShaderViewer::uploadFrame() {
     if (pendingImage_.isNull()) return;
-    // Keep one texture alive and replace only its pixels. Reallocating a
-    // texture on every frame stalls the preview on integrated GPUs.
-    if (!texture_) {
+    const int w = pendingImage_.width();
+    const int h = pendingImage_.height();
+    // Allocate storage once and only replace pixels afterwards. Calling
+    // setData(QImage) repeatedly tries to resize the texture and logs warnings.
+    if (!texture_ || texture_->width() != w || texture_->height() != h) {
+        delete texture_;
         texture_ = new QOpenGLTexture(QOpenGLTexture::Target2D);
+        texture_->setSize(w, h);
+        texture_->setFormat(QOpenGLTexture::RGB8_UNorm);
         texture_->setMinificationFilter(QOpenGLTexture::Linear);
         texture_->setMagnificationFilter(QOpenGLTexture::Linear);
         texture_->setWrapMode(QOpenGLTexture::ClampToEdge);
+        texture_->create();
     }
-    texture_->setData(pendingImage_, QOpenGLTexture::DontGenerateMipMaps);
+    texture_->setData(0, 0, 0, w, h, 1, QOpenGLTexture::RGB,
+                      QOpenGLTexture::UInt8, pendingImage_.constBits());
     pendingImage_ = QImage();
     hasFrame_ = true;
 }

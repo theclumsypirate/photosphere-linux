@@ -623,9 +623,10 @@ bool readInsv(const std::string& path, std::vector<LensFrame>& out,
 
 bool streamInsvSequential(const std::string& path, double fromSeconds,
                           const InsvFrameCallback& callback,
-                          std::string& error, int scaleWidth) {
+                          std::string& error, int scaleWidth,
+                          InsvSeekRequest seekRequest) {
 #ifndef PS_HAVE_FFMPEG
-    (void)path; (void)fromSeconds; (void)callback;
+    (void)path; (void)fromSeconds; (void)callback; (void)seekRequest;
     error = "built without libav: INSV input is disabled";
     return false;
 #else
@@ -678,6 +679,18 @@ bool streamInsvSequential(const std::string& path, double fromSeconds,
     AVFrame* scratch = av_frame_alloc();
     bool keepGoing = true;
     while (keepGoing && av_read_frame(ctx, packet) >= 0) {
+        if (seekRequest) {
+            const double target = seekRequest();
+            if (target >= 0.0) {
+                av_packet_unref(packet);
+                av_seek_frame(ctx, -1, static_cast<int64_t>(target * AV_TIME_BASE),
+                              AVSEEK_FLAG_BACKWARD);
+                for (auto& d : decoders) avcodec_flush_buffers(d.codec);
+                ready[0] = ready[1] = false;
+                av_frame_unref(frame);
+                continue;
+            }
+        }
         auto it = std::find(streams.begin(), streams.end(), packet->stream_index);
         if (it == streams.end()) { av_packet_unref(packet); continue; }
         const size_t lens = static_cast<size_t>(it - streams.begin());

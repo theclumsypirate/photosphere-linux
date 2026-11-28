@@ -55,6 +55,8 @@ private:
         std::deque<std::pair<double, cv::Mat>> frames;
         bool stop = false;
         bool finished = false;
+        double offset = 0.0;
+        double pendingSeek = -1.0;
         QString error;
     };
 

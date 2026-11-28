@@ -41,10 +41,16 @@ using InsvFrameCallback = std::function<bool(const std::vector<LensFrame>&)>;
 bool streamInsvAtTimes(const std::string& path, const std::vector<double>& times,
                        const InsvFrameCallback& callback, std::string& error);
 
+// Returns a seek target in seconds, or -1 when no seek is pending. Called
+// from the decode thread so a player can seek without reopening the file.
+using InsvSeekRequest = std::function<double()>;
+
 // Sequential playback decode: reads packets in file order with a single seek
-// at the start, so the first frame arrives as fast as a media player's.
+// at the start, so the first frame arrives as fast as a media player's. An
+// optional seek request is handled inside the same read loop.
 bool streamInsvSequential(const std::string& path, double fromSeconds,
                           const InsvFrameCallback& callback, std::string& error,
-                          int scaleWidth = 0);
+                          int scaleWidth = 0,
+                          InsvSeekRequest seekRequest = {});
 
 } // namespace ps::io
