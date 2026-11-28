@@ -2,6 +2,7 @@
 
 #include "core/gpano.hpp"
 #include "core/gpu_info.hpp"
+#include "core/tourist_filter.hpp"
 #include "gui/export_dialog.hpp"
 #include "gui/general_settings.hpp"
 #include "gui/hdr_export_worker.hpp"
@@ -39,7 +40,6 @@
 #include <QKeySequence>
 #include <QLabel>
 #include <QListWidgetItem>
-#include <QFile>
 #include <QMenu>
 #include <QMenuBar>
 #include <QMessageBox>
@@ -48,13 +48,13 @@
 #include <QPointer>
 #include <QProcess>
 #include <QProcessEnvironment>
-#include <QStandardPaths>
 #include <QPushButton>
 #include <QScrollArea>
 #include <QShortcut>
 #include <QSplitter>
 #include <QStringList>
 #include <QTextCursor>
+#include <QTimer>
 #include <QVBoxLayout>
 #include <QWidget>
 
@@ -906,8 +906,12 @@ void MainWindow::savePanorama() {
     hdrThread_->start();
 }
 
+MainWindow::~MainWindow() {
+    if (touristThread_.joinable()) touristThread_.join();
+}
+
 void MainWindow::removeTourists(const QString& method) {
-    if (touristProcess_ && touristProcess_->state() != QProcess::NotRunning) {
+    if (touristRunning_.load()) {
         logMessage("Tourist filter is already running.");
         return;
     }
@@ -916,42 +920,58 @@ void MainWindow::removeTourists(const QString& method) {
         QMessageBox::warning(this, "No input", "Add at least one photo first.");
         return;
     }
-    const QString folder = QFileInfo(QString::fromStdString(paths.front()))
-                               .absolutePath();
-    const QString tool =
-        QDir::homePath() + "/.local/share/photosphere/tourist-filter";
-    if (!QFile::exists(tool + "/filter-all-tourists.py")) {
-        logMessage("Tourist filter not found in " + tool);
-        return;
-    }
-    const QString python = QStandardPaths::findExecutable("python3");
-    if (python.isEmpty()) {
-        logMessage("python3 was not found in PATH.");
-        return;
-    }
 
-    touristProcess_ = new QProcess(this);
-    touristProcess_->setWorkingDirectory(tool);
-    connect(touristProcess_, &QProcess::readyReadStandardOutput, this, [this]() {
-        logMessage(QString::fromUtf8(touristProcess_->readAllStandardOutput())
-                       .trimmed());
-    });
-    connect(touristProcess_, &QProcess::readyReadStandardError, this, [this]() {
-        logMessage(QString::fromUtf8(touristProcess_->readAllStandardError())
-                       .trimmed());
-    });
-    connect(touristProcess_,
-            QOverload<int, QProcess::ExitStatus>::of(&QProcess::finished), this,
-            [this](int code) {
-                logMessage("Tourist filter finished with code " +
-                           QString::number(code));
-                touristProcess_->deleteLater();
-                touristProcess_ = nullptr;
+    core::TouristOptions options;
+    if (method == "CUT") options.method = core::TouristMethod::Cut;
+    else if (method == "CUT_AND_MEDIAN") options.method = core::TouristMethod::CutAndMedian;
+    else if (method == "NOISE_AND_MEDIAN") options.method = core::TouristMethod::NoiseAndMedian;
+    else if (method == "INPAINT_AND_MEDIAN") options.method = core::TouristMethod::InpaintAndMedian;
+    else options.method = core::TouristMethod::Median;
+
+    const std::string folder = QFileInfo(QString::fromStdString(paths.front()))
+                                   .absolutePath().toStdString();
+    touristError_.clear();
+    touristOutput_.clear();
+    touristDone_ = 0;
+    touristTotal_ = 1;
+    touristRunning_ = true;
+    if (touristThread_.joinable()) touristThread_.join();
+    touristThread_ = std::thread([folder, options, this]() {
+        std::string error, output;
+        const bool ok = core::removeTourists(
+            folder, options, output, error,
+            [this](int done, int total, const std::string&) {
+                touristDone_ = done;
+                touristTotal_ = std::max(1, total);
             });
-    touristProcess_->start(python,
-                           {"-u", tool + "/filter-all-tourists.py", "-i",
-                            folder, "-m", method, "-n"});
-    logMessage("Removing tourists from " + folder + " using " + method + "...");
+        if (ok) touristOutput_ = output;
+        else touristError_ = error;
+        touristRunning_ = false;
+    });
+
+    if (!touristTimer_) {
+        touristTimer_ = new QTimer(this);
+        connect(touristTimer_, &QTimer::timeout, this, [this]() {
+            if (touristRunning_.load()) {
+                setStatus("Removing tourists " +
+                          QString::number(touristDone_.load()) + "/" +
+                          QString::number(touristTotal_.load()));
+                return;
+            }
+            touristTimer_->stop();
+            if (touristThread_.joinable()) touristThread_.join();
+            if (!touristError_.empty())
+                logMessage("Tourist filter failed: " +
+                           QString::fromStdString(touristError_));
+            else
+                logMessage("Tourist filter saved " +
+                           QString::fromStdString(touristOutput_));
+            setStatus("Tourist filter finished");
+        });
+    }
+    touristTimer_->start(200);
+    logMessage("Removing tourists from " + QString::fromStdString(folder) +
+               " using " + method + "...");
 }
 
 void MainWindow::openShaderPreview() {
