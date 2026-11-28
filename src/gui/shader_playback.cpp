@@ -66,7 +66,10 @@ bool ShaderPlayback::open(const QString& path, double fromSeconds,
     lastDisplayedTime_ = -1.0;
     frameCount_ = 0;
     startDecoder(fromSeconds_);
+    // Opening the preview starts playback; the button already reads "Pause".
+    playing_ = true;
     timer_->start();
+    startAudio();
     return true;
 }
 
