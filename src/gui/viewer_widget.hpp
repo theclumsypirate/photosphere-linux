@@ -9,6 +9,7 @@
 #include <QMatrix4x4>
 #include <QPixmap>
 #include <QPushButton>
+#include <QSlider>
 
 #include <opencv2/core.hpp>
 
@@ -67,6 +68,7 @@ private:
     bool hasTexture_ = false;
     QPushButton* snapshotButton_ = nullptr;
     QPushButton* savePanoButton_ = nullptr;
+    QSlider* fovSlider_ = nullptr;
 };
 
 } // namespace ps::gui

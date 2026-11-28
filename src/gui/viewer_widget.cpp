@@ -72,6 +72,22 @@ ViewerWidget::ViewerWidget(QWidget* parent) : QOpenGLWidget(parent) {
     savePanoButton_->show();
     connect(savePanoButton_, &QPushButton::clicked,
             this, &ViewerWidget::panoramaSaveRequested);
+
+    fovSlider_ = new QSlider(Qt::Horizontal, this);
+    fovSlider_->setRange(15, 120);
+    fovSlider_->setValue(75);
+    fovSlider_->setFixedSize(180, 40);
+    fovSlider_->setToolTip("Field of view");
+    fovSlider_->setStyleSheet(
+        "QSlider { background: rgba(30,32,42,220); border-radius: 6px; }");
+    fovSlider_->move(12, height() - 52);
+    fovSlider_->raise();
+    fovSlider_->show();
+    connect(fovSlider_, &QSlider::valueChanged, this, [this](int value) {
+        fov_ = static_cast<float>(value);
+        resizeGL(width(), height());
+        update();
+    });
 }
 
 ViewerWidget::~ViewerWidget() {
@@ -181,6 +197,7 @@ void ViewerWidget::resetView() {
     yaw_ = 0.0f;
     pitch_ = 0.0f;
     fov_ = 75.0f;
+    if (fovSlider_) fovSlider_->setValue(75);
     resizeGL(width(), height());
     updateViewMatrix();
     update();
@@ -217,6 +234,8 @@ void ViewerWidget::resizeEvent(QResizeEvent* event) {
         snapshotButton_->move(width() - 132, height() - 52);
     if (savePanoButton_)
         savePanoButton_->move(width() - 292, height() - 52);
+    if (fovSlider_)
+        fovSlider_->move(12, height() - 52);
 }
 
 QPixmap ViewerWidget::currentView() {
@@ -229,6 +248,7 @@ QPixmap ViewerWidget::currentView() {
 void ViewerWidget::wheelEvent(QWheelEvent* event) {
     const int steps = event->angleDelta().y() / 120;
     fov_ = std::clamp(fov_ + steps * 5.0f, 15.0f, 120.0f);
+    if (fovSlider_) fovSlider_->setValue(static_cast<int>(fov_));
     resizeGL(width(), height());
     update();
 }
