@@ -2,13 +2,34 @@ name: AppImage
 
 on:
   workflow_dispatch:
+    inputs:
+      version:
+        description: "Version to build (leave as is for no change)"
+        required: false
+        default: "1.0.1"
+        type: string
+      tag:
+        description: "Create and push a git tag for this version"
+        required: false
+        default: false
+        type: boolean
 
 jobs:
   appimage:
     runs-on: ubuntu-22.04
+    permissions:
+      contents: write
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+
+      - name: Bump version
+        env:
+          VERSION: ${{ inputs.version }}
+        run: |
+          sed -i "s/project(photosphere_linux VERSION [0-9][0-9.]*/project(photosphere_linux VERSION ${VERSION}/" CMakeLists.txt
+          sed -i "s/kCurrentVersion = \"v[0-9][0-9.]*\"/kCurrentVersion = \"v${VERSION}\"/" src/gui/general_settings.cpp
+          sed -i "s/currentVersion_ = \"[0-9][0-9.]*\"/currentVersion_ = \"${VERSION}\"/" src/gui/general_settings.hpp
 
       - name: Install dependencies
         run: |
@@ -79,12 +100,22 @@ jobs:
       - name: Pack AppImage
         env:
           APPIMAGE_EXTRACT_AND_RUN: 1
-          OUTPUT: Photosphere-Linux-x86_64.AppImage
+          OUTPUT: Photosphere-Linux-v${{ inputs.version }}-x86_64.AppImage
         run: ./linuxdeploy.AppImage --appdir AppDir --output appimage
+
+      - name: Create tag
+        if: ${{ inputs.tag }}
+        env:
+          VERSION: ${{ inputs.version }}
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git tag -a "v${VERSION}" -m "Release v${VERSION}"
+          git push origin "v${VERSION}"
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
-          name: photosphere-linux-appimage
-          path: Photosphere-Linux-x86_64.AppImage
+          name: photosphere-linux-v${{ inputs.version }}-appimage
+          path: Photosphere-Linux-v${{ inputs.version }}-x86_64.AppImage
           if-no-files-found: error
