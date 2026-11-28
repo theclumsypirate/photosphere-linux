@@ -55,6 +55,7 @@ protected:
 
 private:
     void buildSphere();
+    void updateProjection();
     void updateViewMatrix();
 
     QOpenGLShaderProgram program_;

@@ -3,6 +3,7 @@
 #include <QIcon>
 #include <QMouseEvent>
 #include <QResizeEvent>
+#include <QSignalBlocker>
 #include <QWheelEvent>
 
 #include <opencv2/imgproc.hpp>
@@ -85,7 +86,7 @@ ViewerWidget::ViewerWidget(QWidget* parent) : QOpenGLWidget(parent) {
     fovSlider_->show();
     connect(fovSlider_, &QSlider::valueChanged, this, [this](int value) {
         fov_ = static_cast<float>(value);
-        resizeGL(width(), height());
+        updateProjection();
         update();
     });
 
@@ -165,10 +166,16 @@ void ViewerWidget::initializeGL() {
     vao_.release();
 }
 
+void ViewerWidget::updateProjection() {
+    projection_.setToIdentity();
+    projection_.perspective(fov_,
+                            static_cast<float>(width()) / std::max(1, height()),
+                            0.01f, 10.0f);
+}
+
 void ViewerWidget::resizeGL(int w, int h) {
     glViewport(0, 0, w, h);
-    projection_.setToIdentity();
-    projection_.perspective(fov_, static_cast<float>(w) / std::max(1, h), 0.01f, 10.0f);
+    updateProjection();
 }
 
 void ViewerWidget::paintGL() {
@@ -213,8 +220,11 @@ void ViewerWidget::setView(double yawDegrees, double pitchDegrees,
     yaw_ = static_cast<float>(yawDegrees);
     pitch_ = static_cast<float>(std::clamp(pitchDegrees, -89.0, 89.0));
     fov_ = static_cast<float>(std::clamp(fovDegrees, 15.0, 120.0));
-    if (fovSlider_) fovSlider_->setValue(static_cast<int>(fov_));
-    resizeGL(width(), height());
+    if (fovSlider_) {
+        const QSignalBlocker blocker(fovSlider_);
+        fovSlider_->setValue(static_cast<int>(fov_));
+    }
+    updateProjection();
     updateViewMatrix();
     update();
 }
@@ -229,8 +239,11 @@ void ViewerWidget::resetView() {
     yaw_ = 0.0f;
     pitch_ = 0.0f;
     fov_ = 75.0f;
-    if (fovSlider_) fovSlider_->setValue(75);
-    resizeGL(width(), height());
+    if (fovSlider_) {
+        const QSignalBlocker blocker(fovSlider_);
+        fovSlider_->setValue(75);
+    }
+    updateProjection();
     updateViewMatrix();
     update();
 }
@@ -282,8 +295,11 @@ QPixmap ViewerWidget::currentView() {
 void ViewerWidget::wheelEvent(QWheelEvent* event) {
     const int steps = event->angleDelta().y() / 120;
     fov_ = std::clamp(fov_ + steps * 5.0f, 15.0f, 120.0f);
-    if (fovSlider_) fovSlider_->setValue(static_cast<int>(fov_));
-    resizeGL(width(), height());
+    if (fovSlider_) {
+        const QSignalBlocker blocker(fovSlider_);
+        fovSlider_->setValue(static_cast<int>(fov_));
+    }
+    updateProjection();
     update();
 }
 
