@@ -36,6 +36,8 @@ QString formatTime(double seconds) {
 
 RangeSlider::RangeSlider(QWidget* parent) : QWidget(parent) {
     setMinimumHeight(40);
+    setMinimumWidth(220);
+    setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Fixed);
     setMouseTracking(true);
 }
 
