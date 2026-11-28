@@ -81,6 +81,25 @@ cv::Mat renderFisheyeView(const cv::Mat& sideBySide,
     cv::Mat warpedAF, warpedBF;
     warpedA.convertTo(warpedAF, CV_32FC3);
     warpedB.convertTo(warpedBF, CV_32FC3);
+    // Favour one lens where the two disagree; averaging produces ghosts.
+    for (int row = 0; row < height; ++row) {
+        auto* wa = weightA.ptr<float>(row);
+        auto* wb = weightB.ptr<float>(row);
+        const cv::Vec3f* ca = warpedAF.ptr<cv::Vec3f>(row);
+        const cv::Vec3f* cb = warpedBF.ptr<cv::Vec3f>(row);
+        for (int col = 0; col < width; ++col) {
+            if (wa[col] <= 0.0f || wb[col] <= 0.0f) continue;
+            const double diff = cv::norm(ca[col] - cb[col]);
+            double t = std::clamp((diff - 15.3) / (51.0 - 15.3), 0.0, 1.0);
+            t = t * t * (3.0 - 2.0 * t);
+            const double power = 1.0 + 12.0 * t;
+            const float scale = std::max(wa[col], wb[col]);
+            wa[col] = static_cast<float>(
+                std::pow(wa[col] / scale, power) * scale);
+            wb[col] = static_cast<float>(
+                std::pow(wb[col] / scale, power) * scale);
+        }
+    }
     cv::Mat weight3A, weight3B;
     cv::merge(std::vector<cv::Mat>{weightA, weightA, weightA}, weight3A);
     cv::merge(std::vector<cv::Mat>{weightB, weightB, weightB}, weight3B);

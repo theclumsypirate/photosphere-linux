@@ -53,6 +53,15 @@ void main() {
     if (wa + wb < 0.0001) { wa = 1.0; wb = 0.0; }
     vec3 ca = texture2D(uTexture, vec2(uvA.x * 0.5, 1.0 - uvA.y)).rgb;
     vec3 cb = texture2D(uTexture, vec2(0.5 + uvB.x * 0.5, 1.0 - uvB.y)).rgb;
+    if (wa > 0.0 && wb > 0.0) {
+        // Where the lenses disagree, a plain mix shows a ghost. Favour the
+        // more reliable lens instead, as in the real-time stitcher.
+        float diff = length(ca - cb);
+        float p = 1.0 + 12.0 * smoothstep(0.06, 0.2, diff);
+        float m = max(wa, wb);
+        wa = pow(max(wa / m, 0.0001), p) * m;
+        wb = pow(max(wb / m, 0.0001), p) * m;
+    }
     gl_FragColor = vec4((ca * wa + cb * wb) / (wa + wb), 1.0);
 }
 )";

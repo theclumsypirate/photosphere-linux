@@ -126,6 +126,49 @@ void accumulateFisheyeLevel(const cv::Mat& image, int lens, double fovDegrees,
     cv::add(weightSum, weights, weightSum);
 }
 
+// When the two lenses disagree strongly, a plain average shows a ghost.
+// Raise the exponent of the blend weights so the more reliable lens wins.
+void combineLenses(const cv::Mat& colorA, const cv::Mat& weightA,
+                   const cv::Mat& colorB, const cv::Mat& weightB,
+                   cv::Mat& outColor, cv::Mat& outWeight) {
+    constexpr float kLow = 0.06f * 255.0f;
+    constexpr float kHigh = 0.2f * 255.0f;
+    for (int row = 0; row < outColor.rows; ++row) {
+        const cv::Vec3f* a = colorA.ptr<cv::Vec3f>(row);
+        const cv::Vec3f* b = colorB.ptr<cv::Vec3f>(row);
+        const float* wa0 = weightA.ptr<float>(row);
+        const float* wb0 = weightB.ptr<float>(row);
+        cv::Vec3f* out = outColor.ptr<cv::Vec3f>(row);
+        float* wout = outWeight.ptr<float>(row);
+        for (int col = 0; col < outColor.cols; ++col) {
+            const float wa = wa0[col];
+            const float wb = wb0[col];
+            if (wa <= 0.0f && wb <= 0.0f) {
+                out[col] = cv::Vec3f(0, 0, 0);
+                wout[col] = 0.0f;
+                continue;
+            }
+            if (wa <= 0.0f) { out[col] = b[col]; wout[col] = wb; continue; }
+            if (wb <= 0.0f) { out[col] = a[col]; wout[col] = wa; continue; }
+            const cv::Vec3f ca = a[col] / wa;
+            const cv::Vec3f cb = b[col] / wb;
+            const double diff = cv::norm(ca, cb);
+            double t = std::clamp((diff - kLow) / (kHigh - kLow), 0.0, 1.0);
+            t = t * t * (3.0 - 2.0 * t);
+            const double power = 1.0 + 12.0 * t;
+            // Normalise before pow: raising tiny raw weights would underflow
+            // both to zero and produce black pixels after normalisation.
+            const float scale = std::max(wa, wb);
+            const float waPow = static_cast<float>(
+                std::pow(wa / scale, power) * scale);
+            const float wbPow = static_cast<float>(
+                std::pow(wb / scale, power) * scale);
+            out[col] = ca * waPow + cb * wbPow;
+            wout[col] = waPow + wbPow;
+        }
+    }
+}
+
 } // namespace
 
 Panorama stitchDualFisheye(const std::vector<LensFrame>& pair,
@@ -147,14 +190,19 @@ Panorama stitchDualFisheye(const std::vector<LensFrame>& pair,
     pyramid.reserve(levels);
     for (int level = 0; level < levels; ++level) {
         const auto [lw, lh] = levelSize(w, h, level);
-        PyramidLevel pl;
-        pl.color = cv::Mat::zeros(lh, lw, CV_32FC3);
-        pl.weight = cv::Mat::zeros(lh, lw, CV_32FC1);
+        cv::Mat colorA = cv::Mat::zeros(lh, lw, CV_32FC3);
+        cv::Mat weightA = cv::Mat::zeros(lh, lw, CV_32FC1);
+        cv::Mat colorB = cv::Mat::zeros(lh, lw, CV_32FC3);
+        cv::Mat weightB = cv::Mat::zeros(lh, lw, CV_32FC1);
         const int divisor = 1 << level;
         accumulateFisheyeLevel(*images[0], 0, options.fisheyeFovDegrees,
-                               options.flipLenses, pl.color, pl.weight, divisor);
+                               options.flipLenses, colorA, weightA, divisor);
         accumulateFisheyeLevel(*images[1], 1, options.fisheyeFovDegrees,
-                               options.flipLenses, pl.color, pl.weight, divisor);
+                               options.flipLenses, colorB, weightB, divisor);
+        PyramidLevel pl;
+        pl.color = cv::Mat(lh, lw, CV_32FC3);
+        pl.weight = cv::Mat(lh, lw, CV_32FC1);
+        combineLenses(colorA, weightA, colorB, weightB, pl.color, pl.weight);
         pyramid.push_back(std::move(pl));
         if (options.onProgress) options.onProgress(level + 1, levels);
     }
