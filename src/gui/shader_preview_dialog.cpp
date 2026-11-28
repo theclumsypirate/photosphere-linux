@@ -13,6 +13,7 @@
 namespace ps::gui {
 
 ShaderPreviewDialog::ShaderPreviewDialog(const QString& videoPath, double lensFov,
+                                         double fromSeconds, double toSeconds,
                                          QWidget* parent)
     : QDialog(parent) {
     setWindowTitle("Video preview");
@@ -65,7 +66,7 @@ ShaderPreviewDialog::ShaderPreviewDialog(const QString& videoPath, double lensFo
             &ShaderPreviewDialog::onFailed);
 
     QString error;
-    if (!playback_->open(videoPath, error)) {
+    if (!playback_->open(videoPath, fromSeconds, toSeconds, error)) {
         statusLabel_->setText(error);
         playButton_->setText("Play");
     }

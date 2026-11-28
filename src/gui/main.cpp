@@ -2,6 +2,7 @@
 #include "gui/main_window.hpp"
 #include "gui/shader_preview_dialog.hpp"
 
+#include "io/insv_reader.hpp"
 #include "io/video_writer.hpp"
 
 #include <QApplication>
@@ -49,7 +50,9 @@ int main(int argc, char** argv) {
     for (int i = 1; i + 1 < argc; ++i)
         if (std::strcmp(argv[i], "--preview") == 0) previewFile = argv[++i];
     if (!previewFile.isEmpty()) {
-        ps::gui::ShaderPreviewDialog dialog(previewFile, 195.0);
+        ps::gui::ShaderPreviewDialog dialog(
+            previewFile, 195.0, 0.0,
+            ps::io::insvDuration(previewFile.toStdString()));
         dialog.show();
         return app.exec();
     }

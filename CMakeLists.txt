@@ -114,6 +114,7 @@ if(PS_BUILD_GUI)
     src/gui/hdr_export_worker.cpp
     src/gui/little_planet_dialog.cpp
     src/gui/multi_camera_dialog.cpp
+    src/gui/preview_range_dialog.cpp
     src/gui/save_format_dialog.cpp
     src/gui/shader_playback.cpp
     src/gui/shader_preview_dialog.cpp

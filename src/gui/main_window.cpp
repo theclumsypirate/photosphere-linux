@@ -7,6 +7,7 @@
 #include "gui/hdr_export_worker.hpp"
 #include "gui/little_planet_dialog.hpp"
 #include "gui/multi_camera_dialog.hpp"
+#include "gui/preview_range_dialog.hpp"
 #include "gui/save_format_dialog.hpp"
 #include "gui/shader_preview_dialog.hpp"
 #include "gui/stitch_worker.hpp"
@@ -910,8 +911,16 @@ void MainWindow::openShaderPreview() {
                                  "panorama viewer after loading a frame.");
         return;
     }
+    double from = 0.0;
+    double to = io::insvDuration(videoPath);
+    if (to > 0.0) {
+        PreviewRangeDialog rangeDialog(to, this);
+        if (rangeDialog.exec() != QDialog::Accepted) return;
+        from = rangeDialog.startSeconds();
+        to = rangeDialog.endSeconds();
+    }
     auto* dialog = new ShaderPreviewDialog(QString::fromStdString(videoPath),
-                                           fovSpin_->value(), this);
+                                           fovSpin_->value(), from, to, this);
     dialog->setAttribute(Qt::WA_DeleteOnClose, true);
     dialog->show();
 }

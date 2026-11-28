@@ -43,20 +43,28 @@ ShaderPlayback::ShaderPlayback(QObject* parent) : QObject(parent) {
 
 ShaderPlayback::~ShaderPlayback() { close(); }
 
-bool ShaderPlayback::open(const QString& path, QString& error) {
+bool ShaderPlayback::open(const QString& path, double fromSeconds,
+                          double toSeconds, QString& error) {
     close();
     path_ = path;
     fps_ = io::insvFrameRate(path.toStdString());
     if (fps_ <= 0.0) fps_ = 25.0;
-    duration_ = io::insvDuration(path.toStdString());
-    if (duration_ <= 0.0) {
+    sourceDuration_ = io::insvDuration(path.toStdString());
+    if (sourceDuration_ <= 0.0) {
         error = "Cannot read the video duration";
+        return false;
+    }
+    fromSeconds_ = std::clamp(fromSeconds, 0.0, sourceDuration_);
+    const double end = std::clamp(toSeconds, fromSeconds_, sourceDuration_);
+    duration_ = end - fromSeconds_;
+    if (duration_ < 0.05) {
+        error = "The selected range is too short";
         return false;
     }
     position_ = 0.0;
     lastDisplayedTime_ = -1.0;
     frameCount_ = 0;
-    startDecoder(0.0);
+    startDecoder(fromSeconds_);
     timer_->start();
     return true;
 }
@@ -64,7 +72,7 @@ bool ShaderPlayback::open(const QString& path, QString& error) {
 void ShaderPlayback::startDecoder(double fromSeconds) {
     stopDecoder();
     auto shared = std::make_shared<Queue>();
-    shared->offset = std::clamp(fromSeconds, 0.0, duration_);
+    shared->offset = std::clamp(fromSeconds, 0.0, sourceDuration_);
     queue_ = shared;
     const QString path = path_;
     double start = shared->offset;
@@ -119,6 +127,8 @@ void ShaderPlayback::close() {
     stopDecoder();
     path_.clear();
     duration_ = 0.0;
+    sourceDuration_ = 0.0;
+    fromSeconds_ = 0.0;
     position_ = 0.0;
 }
 
@@ -141,11 +151,11 @@ void ShaderPlayback::seek(double seconds) {
     }
     if (finished) {
         // Nothing is reading packets any more, so a new decoder is required.
-        startDecoder(position_);
+        startDecoder(fromSeconds_ + position_);
     } else {
         std::lock_guard<std::mutex> lock(queue_->mutex);
         queue_->frames.clear();
-        queue_->pendingSeek = position_;
+        queue_->pendingSeek = fromSeconds_ + position_;
     }
     emit positionChanged(position_);
 }

@@ -28,7 +28,8 @@ public:
     explicit ShaderPlayback(QObject* parent = nullptr);
     ~ShaderPlayback() override;
 
-    bool open(const QString& path, QString& error);
+    bool open(const QString& path, double fromSeconds, double toSeconds,
+              QString& error);
     void play();
     void pause();
     void seek(double seconds);
@@ -68,6 +69,8 @@ private:
     std::shared_ptr<Queue> queue_;
     std::thread worker_;
     double fps_ = 25.0;
+    double sourceDuration_ = 0.0;
+    double fromSeconds_ = 0.0;
     double duration_ = 0.0;
     double position_ = 0.0;
     double speed_ = 1.0;

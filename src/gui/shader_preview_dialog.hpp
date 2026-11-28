@@ -21,6 +21,7 @@ class ShaderPreviewDialog : public QDialog {
 
 public:
     explicit ShaderPreviewDialog(const QString& videoPath, double lensFov,
+                                 double fromSeconds, double toSeconds,
                                  QWidget* parent = nullptr);
     ~ShaderPreviewDialog() override;
 
