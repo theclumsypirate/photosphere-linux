@@ -164,6 +164,7 @@ void ViewerWidget::initializeGL() {
     glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, 3 * sizeof(float), nullptr);
     glEnableVertexAttribArray(0);
     vao_.release();
+    glReady_ = true;
 }
 
 void ViewerWidget::updateProjection() {
@@ -181,6 +182,11 @@ void ViewerWidget::resizeGL(int w, int h) {
 void ViewerWidget::paintGL() {
     glClearColor(0.05f, 0.05f, 0.07f, 1.0f);
     glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
+    if (!pendingPanorama_.empty()) {
+        const cv::Mat image = pendingPanorama_;
+        pendingPanorama_.release();
+        setPanorama(image);
+    }
     if (!hasTexture_) return;
     program_.bind();
     program_.setUniformValue("uProjection", projection_);
@@ -196,6 +202,11 @@ void ViewerWidget::paintGL() {
 
 void ViewerWidget::setPanorama(const cv::Mat& bgr) {
     if (bgr.empty()) return;
+    if (!glReady_) {
+        pendingPanorama_ = bgr.clone();
+        update();
+        return;
+    }
     makeCurrent();
     cv::Mat rgb;
     cv::cvtColor(bgr, rgb, cv::COLOR_BGR2RGB);

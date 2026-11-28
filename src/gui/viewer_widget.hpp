@@ -73,6 +73,8 @@ private:
     float fov_ = 75.0f;
     bool dragging_ = false;
     bool hasTexture_ = false;
+    bool glReady_ = false;
+    cv::Mat pendingPanorama_;
     QPushButton* snapshotButton_ = nullptr;
     QPushButton* savePanoButton_ = nullptr;
     QSlider* fovSlider_ = nullptr;
