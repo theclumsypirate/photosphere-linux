@@ -14,6 +14,7 @@
 #include "core/little_planet.hpp"
 #include "core/stitcher.hpp"
 #include "io/exif_pose.hpp"
+#include "io/ffmpeg_log.hpp"
 #include "io/frame_store.hpp"
 #include "io/image_io.hpp"
 #include "io/insv_reader.hpp"
@@ -38,6 +39,7 @@
 #include <QLabel>
 #include <QListWidgetItem>
 #include <QMessageBox>
+#include <QMetaObject>
 #include <QPlainTextEdit>
 #include <QPointer>
 #include <QProcess>
@@ -147,7 +149,7 @@ QString lastDir() {
 } // namespace
 
 MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent) {
-    setWindowTitle("PhotoSphere Linux");
+    setWindowTitle("Photosphere Linux");
     setWindowIcon(QIcon(":/icons/icon.png"));
     setAcceptDrops(true);
     resize(1780, 1020);
@@ -309,7 +311,13 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent) {
 
     g_logEdit = logEdit_;
     qInstallMessageHandler(messageHandler);
-    logMessage("PhotoSphere Linux started");
+    io::setFFmpegLogSink([](const std::string& line) {
+        QMetaObject::invokeMethod(qApp, [line]() {
+            if (g_logEdit)
+                g_logEdit->appendPlainText("[FFMPEG] " + QString::fromStdString(line));
+        }, Qt::QueuedConnection);
+    });
+    logMessage("Photosphere Linux started");
     logMessage(QString::fromStdString(describeGpu(detectGpu())));
 
     connect(addButton, &QPushButton::clicked, this, &MainWindow::addFiles);

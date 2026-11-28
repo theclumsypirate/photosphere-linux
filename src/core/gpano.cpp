@@ -15,7 +15,7 @@ constexpr uint8_t kApp1 = 0xE1;
 constexpr uint8_t kApp15 = 0xEF;
 constexpr uint8_t kCom = 0xFE;
 const std::string kXmpSignature = "http://ns.adobe.com/xap/1.0/\0";
-const std::string kToolkit = "PhotoSphere Linux";
+const std::string kToolkit = "Photosphere Linux";
 const std::string kGpanoNs = "http://ns.google.com/photos/1.0/panorama/";
 const std::string kRdfNs = "http://www.w3.org/1999/02/22-rdf-syntax-ns#";
 

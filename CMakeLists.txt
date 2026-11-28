@@ -46,6 +46,7 @@ target_link_libraries(ps_core PUBLIC ${OpenCV_LIBS} Threads::Threads)
 # I/O: image readers, INSV demux, frame store.
 add_library(ps_io
   src/io/exif_pose.cpp
+  src/io/ffmpeg_log.cpp
   src/io/hdr_export.cpp
   src/io/image_io.cpp
   src/io/insv_reader.cpp
