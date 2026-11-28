@@ -3,13 +3,8 @@ name: AppImage
 on:
   workflow_dispatch:
     inputs:
-      version:
-        description: "Version to build (leave as is for no change)"
-        required: false
-        default: "1.0.1"
-        type: string
       tag:
-        description: "Git tag to create and push, e.g. linux-v1.0.1 (empty = none)"
+        description: "Version tag, e.g. linux-v1.0.1 (empty = no tag, no bump)"
         required: false
         default: "linux-v1.0.1"
         type: string
@@ -23,9 +18,23 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Bump version
+      - name: Resolve version
         env:
-          VERSION: ${{ inputs.version }}
+          TAG: ${{ inputs.tag }}
+        run: |
+          if [ -z "$TAG" ]; then
+            VERSION=$(sed -n 's/.*project(photosphere_linux VERSION \([0-9][0-9.]*\).*/\1/p' CMakeLists.txt)
+          else
+            VERSION="${TAG#linux-}"
+            VERSION="${VERSION#v}"
+            if ! [[ "$VERSION" =~ ^[0-9]+([.][0-9]+)*$ ]]; then
+              echo "Invalid tag: $TAG" >&2
+              exit 1
+            fi
+          fi
+          echo "VERSION=${VERSION}" >> "$GITHUB_ENV"
+
+      - name: Bump version
         run: |
           sed -i "s/project(photosphere_linux VERSION [0-9][0-9.]*/project(photosphere_linux VERSION ${VERSION}/" CMakeLists.txt
           sed -i "s/kCurrentVersion = \"v[0-9][0-9.]*\"/kCurrentVersion = \"v${VERSION}\"/" src/gui/general_settings.cpp
@@ -100,7 +109,7 @@ jobs:
       - name: Pack AppImage
         env:
           APPIMAGE_EXTRACT_AND_RUN: 1
-          OUTPUT: Photosphere-Linux-v${{ inputs.version }}-x86_64.AppImage
+          OUTPUT: Photosphere-Linux-v${{ env.VERSION }}-x86_64.AppImage
         run: ./linuxdeploy.AppImage --appdir AppDir --output appimage
 
       - name: Create tag
@@ -116,6 +125,6 @@ jobs:
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
-          name: photosphere-linux-v${{ inputs.version }}-appimage
-          path: Photosphere-Linux-v${{ inputs.version }}-x86_64.AppImage
+          name: photosphere-linux-v${{ env.VERSION }}-appimage
+          path: Photosphere-Linux-v${{ env.VERSION }}-x86_64.AppImage
           if-no-files-found: error
