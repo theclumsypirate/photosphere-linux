@@ -104,7 +104,9 @@ endif()
 
 if(PS_BUILD_GUI)
   find_package(Qt6 REQUIRED COMPONENTS Widgets OpenGLWidgets Network)
-  qt_standard_project_setup()
+  if(COMMAND qt_standard_project_setup)
+    qt_standard_project_setup()
+  endif()
   qt_add_executable(photosphere-gui
     src/gui/main.cpp
     src/gui/main_window.cpp
