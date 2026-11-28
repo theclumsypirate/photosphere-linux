@@ -359,6 +359,39 @@ bool decodeAtTimes(const std::string& path, const std::vector<double>& times,
     AVPacket* packet = av_packet_alloc();
     AVFrame* frame = av_frame_alloc();
     AVFrame* scratch = av_frame_alloc();
+
+    bool sorted = true;
+    for (size_t i = 1; i < times.size(); ++i)
+        if (times[i] < times[i - 1]) { sorted = false; break; }
+    // Seeking once per timestamp is several times slower than one linear
+    // pass. Sorted requests can be served from the sequential decoder.
+    const bool useSequential = sorted && !isEacVideo(path);
+    if (useSequential) {
+        size_t next = 0;
+        std::string streamError;
+        streamInsvSequential(
+            path, 0.0,
+            [&](const std::vector<LensFrame>& frames) {
+                if (frames.empty()) return true;
+                const double ts = frames.front().timestamp;
+                while (next < times.size() &&
+                       times[next] <= ts + 1e-3) {
+                    std::vector<LensFrame> picked = frames;
+                    for (auto& f : picked)
+                        f.sequence = static_cast<int>(next);
+                    if (callback && !(*callback)(picked)) {
+                        next = times.size();
+                        return false;
+                    }
+                    if (out)
+                        for (auto& f : picked) out->push_back(std::move(f));
+                    ++next;
+                }
+                return next < times.size();
+            },
+            streamError, 0);
+        if (!streamError.empty() && out && out->empty()) error = streamError;
+    } else {
     for (size_t sample = 0; sample < times.size(); ++sample) {
         const double target = std::max(0.0, times[sample]);
         const int64_t seekTs = static_cast<int64_t>(std::max(0.0, target - 0.5) * AV_TIME_BASE);
@@ -459,6 +492,7 @@ bool decodeAtTimes(const std::string& path, const std::vector<double>& times,
         if (callback && !(*callback)(picked)) break;
         if (out)
             for (auto& f : picked) out->push_back(std::move(f));
+    }
     }
     av_frame_free(&frame);
     av_frame_free(&scratch);
