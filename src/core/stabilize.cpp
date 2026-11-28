@@ -2,10 +2,12 @@
 
 #include "core/spherical.hpp"
 
+#include <opencv2/core/utility.hpp>
 #include <opencv2/imgproc.hpp>
 
 #include <algorithm>
 #include <cmath>
+#include <vector>
 
 namespace ps {
 namespace {
@@ -161,21 +163,38 @@ cv::Mat rotateEquirect(const cv::Mat& equirect, const Mat3& rotation) {
     const Mat3 inverse = rotation::transpose(rotation);
     cv::Mat mapX(equirect.rows, equirect.cols, CV_32FC1);
     cv::Mat mapY(equirect.rows, equirect.cols, CV_32FC1);
-    for (int row = 0; row < equirect.rows; ++row) {
-        const double latitude = equirect::latitudeDegrees(row, equirect.rows);
-        auto* mx = mapX.ptr<float>(row);
-        auto* my = mapY.ptr<float>(row);
-        for (int col = 0; col < equirect.cols; ++col) {
-            const double longitude = equirect::longitudeDegrees(col, equirect.cols);
-            const Vec3 direction = equirect::direction(longitude, latitude);
-            const Vec3 source = rotateVec(inverse, direction);
-            mx[col] = static_cast<float>(equirect::columnFor(
-                equirect::longitudeOf(source), equirect.cols));
-            my[col] = static_cast<float>(std::clamp(
-                equirect::rowFor(equirect::latitudeOf(source), equirect.rows),
-                0.0, static_cast<double>(equirect.rows - 1)));
-        }
+    // The equirectangular grid is fixed, so its trigonometry is computed once
+    // per row and column instead of once per pixel.
+    std::vector<double> sinLon(equirect.cols), cosLon(equirect.cols);
+    for (int col = 0; col < equirect.cols; ++col) {
+        const double lon = equirect::longitudeDegrees(col, equirect.cols) *
+                           kPi / 180.0;
+        sinLon[col] = std::sin(lon);
+        cosLon[col] = std::cos(lon);
     }
+    std::vector<double> sinLat(equirect.rows), cosLat(equirect.rows);
+    for (int row = 0; row < equirect.rows; ++row) {
+        const double lat = equirect::latitudeDegrees(row, equirect.rows) *
+                           kPi / 180.0;
+        sinLat[row] = std::sin(lat);
+        cosLat[row] = std::cos(lat);
+    }
+    cv::parallel_for_(cv::Range(0, equirect.rows), [&](const cv::Range& range) {
+        for (int row = range.start; row < range.end; ++row) {
+            const double cl = cosLat[row], sl = sinLat[row];
+            auto* mx = mapX.ptr<float>(row);
+            auto* my = mapY.ptr<float>(row);
+            for (int col = 0; col < equirect.cols; ++col) {
+                const Vec3 direction{sinLon[col] * cl, cosLon[col] * cl, sl};
+                const Vec3 source = rotateVec(inverse, direction);
+                mx[col] = static_cast<float>(equirect::columnFor(
+                    equirect::longitudeOf(source), equirect.cols));
+                my[col] = static_cast<float>(std::clamp(
+                    equirect::rowFor(equirect::latitudeOf(source), equirect.rows),
+                    0.0, static_cast<double>(equirect.rows - 1)));
+            }
+        }
+    });
     cv::Mat out;
     cv::remap(equirect, out, mapX, mapY, cv::INTER_LINEAR, cv::BORDER_WRAP);
     return out;
