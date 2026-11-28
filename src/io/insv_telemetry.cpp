@@ -336,11 +336,6 @@ void parseGyro(const std::vector<uint8_t>& trailer, const Record& record,
 
 } // namespace
 
-double InsvTelemetry::secondsAt(size_t index) const {
-    if (samples.empty() || index >= samples.size()) return 0.0;
-    return (samples[index].timestampUs - samples.front().timestampUs) / 1e6;
-}
-
 bool readInsvTelemetry(const std::string& path, InsvTelemetry& out,
                        std::string& error) {
     out = {};

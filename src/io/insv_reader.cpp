@@ -127,7 +127,7 @@ bool fallbackToSoftware(DecoderState& state, const AVCodec* codec,
                         AVCodecParameters* parameters) {
     if (!state.hardware) return false;
     hardwareDecodeUnavailable = true;
-    markHardwareDecodeFailed();
+    markHardwareDecodeFailed(gpuDecodeSignature(detectGpu()));
     releaseDecoder(state);
     return openSoftwareDecoder(state, codec, parameters);
 }
@@ -135,7 +135,8 @@ bool fallbackToSoftware(DecoderState& state, const AVCodec* codec,
 // Tries the preferred backend, then the other hardware paths, then software.
 bool openBestDecoder(DecoderState& state, const AVCodec* codec,
                      AVCodecParameters* parameters, DecodeBackend preferred) {
-    if (hardwareDecodeUnavailable || hardwareDecodeFailed())
+    if (hardwareDecodeUnavailable ||
+        hardwareDecodeFailed(gpuDecodeSignature(detectGpu())))
         return openSoftwareDecoder(state, codec, parameters);
     const DecodeBackend candidates[] = {preferred, DecodeBackend::Qsv,
                                         DecodeBackend::Vaapi, DecodeBackend::Cuda};
@@ -790,7 +791,7 @@ bool streamInsvSequential(const std::string& path, double fromSeconds,
             const double ts = static_cast<double>(frame->best_effort_timestamp) *
                               av_q2d(ctx->streams[packet->stream_index]->time_base);
             auto emit = [&](int index, const cv::Mat& image) {
-                pending[index].image = image.clone();
+                pending[index].image = image;
                 pending[index].lens = index;
                 pending[index].source = path;
                 pending[index].timestamp = ts;

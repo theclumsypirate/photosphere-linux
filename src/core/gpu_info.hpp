@@ -28,8 +28,9 @@ GpuInfo detectGpu();
 
 // Remembers a hardware decoder that failed on a real frame, so later runs do
 // not retry it and flood the log with driver errors.
-bool hardwareDecodeFailed();
-void markHardwareDecodeFailed();
+std::string gpuDecodeSignature(const GpuInfo& info);
+bool hardwareDecodeFailed(const std::string& signature);
+void markHardwareDecodeFailed(const std::string& signature);
 
 const char* toString(GpuVendor vendor);
 const char* toString(DecodeBackend backend);

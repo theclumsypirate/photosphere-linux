@@ -86,19 +86,29 @@ fs::path decodeFailureMarker() {
 
 } // namespace
 
-bool hardwareDecodeFailed() {
-    return pathExists(decodeFailureMarker());
+std::string gpuDecodeSignature(const GpuInfo& info) {
+    return std::string(toString(info.vendor)) + "|" + info.deviceName + "|" +
+           info.driver + "|" + std::to_string(info.hasNvidiaDevice ? 1 : 0) +
+           "|" + std::to_string(info.hasDrmRenderNode ? 1 : 0);
 }
 
-void markHardwareDecodeFailed() {
+bool hardwareDecodeFailed(const std::string& signature) {
+    std::ifstream in(decodeFailureMarker());
+    std::string stored;
+    std::getline(in, stored);
+    return stored == signature;
+}
+
+void markHardwareDecodeFailed(const std::string& signature) {
     const fs::path marker = decodeFailureMarker();
     std::error_code ec;
     fs::create_directories(marker.parent_path(), ec);
     std::ofstream out(marker);
+    out << signature << "\n";
 }
 
 DecodeBackend GpuInfo::preferredDecodeBackend() const {
-    if (hardwareDecodeFailed()) return DecodeBackend::Cpu;
+    if (hardwareDecodeFailed(gpuDecodeSignature(*this))) return DecodeBackend::Cpu;
     if (hasNvidiaDevice || vendor == GpuVendor::Nvidia || opencvCudaDevices > 0)
         return DecodeBackend::Cuda;
     if (hasQsvLibrary && hasDrmRenderNode && vendor == GpuVendor::Intel)

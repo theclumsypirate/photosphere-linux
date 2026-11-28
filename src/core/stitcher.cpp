@@ -9,6 +9,7 @@
 #include "core/seam_carving.hpp"
 #include "core/renderer.hpp"
 
+#include <opencv2/core/utility.hpp>
 #include <opencv2/imgproc.hpp>
 
 #include <algorithm>
@@ -133,7 +134,8 @@ void combineLenses(const cv::Mat& colorA, const cv::Mat& weightA,
                    cv::Mat& outColor, cv::Mat& outWeight) {
     constexpr float kLow = 0.06f * 255.0f;
     constexpr float kHigh = 0.2f * 255.0f;
-    for (int row = 0; row < outColor.rows; ++row) {
+    cv::parallel_for_(cv::Range(0, outColor.rows), [&](const cv::Range& range) {
+    for (int row = range.start; row < range.end; ++row) {
         const cv::Vec3f* a = colorA.ptr<cv::Vec3f>(row);
         const cv::Vec3f* b = colorB.ptr<cv::Vec3f>(row);
         const float* wa0 = weightA.ptr<float>(row);
@@ -153,6 +155,11 @@ void combineLenses(const cv::Mat& colorA, const cv::Mat& weightA,
             const cv::Vec3f ca = a[col] / wa;
             const cv::Vec3f cb = b[col] / wb;
             const double diff = cv::norm(ca, cb);
+            if (diff <= kLow) {
+                out[col] = a[col] + b[col];
+                wout[col] = wa + wb;
+                continue;
+            }
             double t = std::clamp((diff - kLow) / (kHigh - kLow), 0.0, 1.0);
             t = t * t * (3.0 - 2.0 * t);
             const double power = 1.0 + 12.0 * t;
@@ -167,6 +174,7 @@ void combineLenses(const cv::Mat& colorA, const cv::Mat& weightA,
             wout[col] = waPow + wbPow;
         }
     }
+    });
 }
 
 } // namespace

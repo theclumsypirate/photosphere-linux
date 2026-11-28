@@ -32,7 +32,10 @@ struct InsvTelemetry {
     std::vector<ImuSample> samples;
 
     // Seconds since the first sample, on the camera clock.
-    double secondsAt(size_t index) const;
+    double secondsAt(size_t index) const {
+        if (samples.empty() || index >= samples.size()) return 0.0;
+        return (samples[index].timestampUs - samples.front().timestampUs) / 1e6;
+    }
 };
 
 // Reads the 'inst' trailer at the end of an INSV/MP4/MOV file. No video frames
